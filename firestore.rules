@@ -1,0 +1,30 @@
+rules_version = '2';
+// قواعد حماية نظام الحضور — المجموعات تبدأ بـ att_ حتى لا تتعارض مع نظام شؤون الطلبة
+// تنبيه: إذا كانت لديك قواعد أخرى في نفس المشروع، أضف كتل match الخاصة بـ att_ إليها ولا تحذفها
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function myRole() { return get(/databases/$(database)/documents/att_users/$(request.auth.uid)).data.role; }
+    function isAdmin() { return signedIn() && myRole() == 'admin'; }
+    function isRegistrar() { return signedIn() && myRole() in ['admin', 'registrar']; }
+    function isStaff() { return signedIn() && myRole() in ['admin', 'registrar', 'instructor']; }
+
+    match /att_users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+    match /att_students/{id} {
+      allow read: if isStaff();
+      allow write: if isRegistrar();
+    }
+    match /att_faceprints/{id} {
+      allow read: if isStaff();
+      allow write: if isRegistrar();
+    }
+    match /att_sessions/{id} {
+      allow read: if isAdmin() || (isStaff() && resource.data.instructorUid == request.auth.uid);
+      allow create: if isStaff() && request.resource.data.instructorUid == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+  }
+}
