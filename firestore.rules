@@ -1,30 +1,69 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور — المجموعات تبدأ بـ att_ حتى لا تتعارض مع نظام شؤون الطلبة
-// تنبيه: إذا كانت لديك قواعد أخرى في نفس المشروع، أضف كتل match الخاصة بـ att_ إليها ولا تحذفها
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام) — جامعة السراج
+// المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function myRole() { return get(/databases/$(database)/documents/att_users/$(request.auth.uid)).data.role; }
-    function isAdmin() { return signedIn() && myRole() == 'admin'; }
-    function isRegistrar() { return signedIn() && myRole() in ['admin', 'registrar']; }
-    function isStaff() { return signedIn() && myRole() in ['admin', 'registrar', 'instructor']; }
 
+    function signedIn() { return request.auth != null; }
+    function me() { return get(/databases/$(database)/documents/att_users/$(request.auth.uid)).data; }
+    function role() { return me().role; }
+    function isSuper() { return signedIn() && role() in ['super', 'admin']; }
+    function active() { return signedIn() && role() in ['super', 'admin', 'dean', 'head', 'registrar', 'instructor']; }
+    function isDeanOf(c) { return active() && role() == 'dean' && me().collegeId == c; }
+    function hasDept(d) { return active() && d in me().get('deptIds', []); }
+    function canSeeDept(c, d) { return isSuper() || isDeanOf(c) || hasDept(d); }
+    function canManageDept(c, d) { return isSuper() || isDeanOf(c) || (role() in ['head', 'registrar'] && hasDept(d)); }
+    function lowDean() { return ['head', 'registrar', 'instructor', 'disabled']; }
+    function lowHead() { return ['registrar', 'instructor', 'disabled']; }
+
+    // الهيكل التنظيمي: يقرؤه الجميع، ويعدّله مدير النظام
+    match /att_org/{doc} {
+      allow read: if active();
+      allow write: if isSuper();
+    }
+
+    // المستخدمون
     match /att_users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow write: if isAdmin();
+      allow read: if signedIn() && (request.auth.uid == uid || isSuper()
+        || (active() && role() in ['dean', 'head'] && resource.data.collegeId == me().collegeId));
+      allow create: if isSuper()
+        || (active() && role() == 'dean' && request.resource.data.collegeId == me().collegeId
+            && request.resource.data.role in lowDean())
+        || (active() && role() == 'head' && request.resource.data.collegeId == me().collegeId
+            && request.resource.data.role in lowHead()
+            && request.resource.data.deptIds.hasOnly(me().get('deptIds', [])));
+      allow update: if request.auth.uid != uid && (isSuper()
+        || (active() && role() == 'dean' && resource.data.collegeId == me().collegeId && resource.data.role in lowDean()
+            && request.resource.data.collegeId == me().collegeId && request.resource.data.role in lowDean())
+        || (active() && role() == 'head' && resource.data.collegeId == me().collegeId && resource.data.role in lowHead()
+            && resource.data.get('deptIds', []).hasOnly(me().get('deptIds', []))
+            && request.resource.data.collegeId == me().collegeId && request.resource.data.role in lowHead()
+            && request.resource.data.deptIds.hasOnly(me().get('deptIds', []))));
+      allow delete: if isSuper();
     }
-    match /att_students/{id} {
-      allow read: if isStaff();
-      allow write: if isRegistrar();
+
+    // طلبة وبصمات كل (قسم + مرحلة + دراسة) في مستند واحد
+    match /att_packs/{id} {
+      allow read: if resource == null || canSeeDept(resource.data.collegeId, resource.data.deptId);
+      allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
+      allow update: if canManageDept(resource.data.collegeId, resource.data.deptId)
+        && request.resource.data.deptId == resource.data.deptId
+        && request.resource.data.collegeId == resource.data.collegeId;
+      allow delete: if isSuper();
     }
-    match /att_faceprints/{id} {
-      allow read: if isStaff();
-      allow write: if isRegistrar();
-    }
+
+    // المحاضرات
     match /att_sessions/{id} {
-      allow read: if isAdmin() || (isStaff() && resource.data.instructorUid == request.auth.uid);
-      allow create: if isStaff() && request.resource.data.instructorUid == request.auth.uid;
-      allow update, delete: if isAdmin();
+      allow read: if isSuper()
+        || (active() && resource.data.instructorUid == request.auth.uid)
+        || isDeanOf(resource.data.collegeId)
+        || (active() && role() == 'head' && hasDept(resource.data.deptId));
+      allow create: if isSuper()
+        || (active() && role() in ['dean', 'head', 'instructor']
+            && request.resource.data.instructorUid == request.auth.uid
+            && (hasDept(request.resource.data.deptId) || isDeanOf(request.resource.data.collegeId)));
+      allow update, delete: if isSuper() || isDeanOf(resource.data.collegeId)
+        || (active() && role() == 'head' && hasDept(resource.data.deptId));
     }
   }
 }

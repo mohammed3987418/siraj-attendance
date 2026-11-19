@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>حضور الطلبة — قسم هندسة تقنيات الذكاء الاصطناعي</title>
+<title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#14324f">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
@@ -71,6 +71,16 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .login img{width:84px;border-radius:18px}
 .hidden{display:none!important}
 </style>
+<style>
+.scope{display:flex;gap:6px;align-items:center;background:#fff;border-bottom:1px solid var(--line);padding:8px 16px;flex-wrap:wrap}
+.scope select{width:auto;min-width:200px}
+.scope b{color:var(--navy);font-size:14px}
+.chk-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:4px;max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px}
+.chk-list label{display:flex;gap:6px;align-items:center;color:#1c2733;margin:0}
+.chk-list input{width:auto}
+.chk-list .grp{grid-column:1/-1;font-weight:700;color:var(--navy);margin-top:4px}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+</style>
 </head>
 <body>
 
@@ -78,8 +88,8 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <div id="loginView" class="login-wrap hidden">
   <div class="card login">
     <img src="icons/icon-192.png" alt="">
-    <h2 style="margin:10px 0 2px">حضور الطلبة ببصمة الوجه</h2>
-    <p class="note" style="margin-top:0">جامعة السراج — قسم هندسة تقنيات الذكاء الاصطناعي</p>
+    <h2 style="margin:10px 0 2px">نظام حضور الطلبة ببصمة الوجه</h2>
+    <p class="note" style="margin-top:0">جامعة السراج</p>
     <form id="loginForm" style="text-align:right">
       <label>البريد الإلكتروني</label><input id="lEmail" type="email" autocomplete="username" required dir="ltr">
       <label style="margin-top:8px">كلمة المرور</label><input id="lPass" type="password" autocomplete="current-password" required dir="ltr">
@@ -93,7 +103,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <!-- ============ التطبيق ============ -->
 <div id="appView" class="hidden">
 <header>
-  <div><h1>حضور الطلبة ببصمة الوجه</h1><small>جامعة السراج — قسم هندسة تقنيات الذكاء الاصطناعي</small></div>
+  <div><h1>نظام حضور الطلبة ببصمة الوجه</h1><small>جامعة السراج</small></div>
   <div class="hdr">
     <span id="conn" class="pill"></span>
     <span id="modelStatus" class="pill">جارٍ التحضير...</span>
@@ -102,43 +112,50 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     <button id="logoutBtn" class="btn sm light hidden">خروج</button>
   </div>
 </header>
+<div class="scope">
+  <b>الكلية:</b><select id="scopeCollege"></select>
+  <b>القسم:</b><select id="scopeDept"></select>
+  <span class="note" id="termBox"></span>
+</div>
 <nav>
   <button data-tab="tStudents">الطلبة والبصمات</button>
   <button data-tab="tSession">أخذ الحضور</button>
   <button data-tab="tRecords">السجلات والتقارير</button>
   <button data-tab="tUsers">المستخدمون</button>
+  <button data-tab="tOrg">الهيكل التنظيمي</button>
   <button data-tab="tSettings">الإعدادات</button>
 </nav>
 <main>
-<div id="localBanner" class="banner hidden">⚠ وضع تجريبي محلي: لم تُضَف إعدادات Firebase بعد في ملف <b>firebase-config.js</b>، لذلك تُحفظ البيانات على هذا الجهاز فقط.</div>
+<div id="localBanner" class="banner hidden">⚠ وضع تجريبي محلي: لم تُضَف إعدادات Firebase في ملف <b>firebase-config.js</b>، لذلك تُحفظ البيانات على هذا الجهاز فقط.</div>
+<div id="noDeptBanner" class="banner hidden">لا توجد أقسام مرتبطة بحسابك بعد. راجع مدير النظام أو عميد الكلية.</div>
 
 <!-- الطلبة -->
 <section id="tStudents" class="tab">
   <div class="card">
-    <h2>إضافة طالب</h2>
+    <h2>إضافة طالب إلى <span class="deptName"></span></h2>
     <div class="grid">
       <div><label>الرقم الجامعي</label><input id="sId"></div>
       <div><label>الاسم الرباعي</label><input id="sName"></div>
-      <div><label>المرحلة</label><select id="sStage"><option>الأولى</option><option>الثانية</option><option>الثالثة</option><option>الرابعة</option></select></div>
-      <div><label>الدراسة</label><select id="sShift"><option>صباحي</option><option>مسائي</option></select></div>
-      <div><label>الشعبة</label><select id="sSection"><option>A</option><option>B</option><option>C</option></select></div>
+      <div><label>المرحلة</label><select id="sStage" class="optStage"></select></div>
+      <div><label>الدراسة</label><select id="sShift" class="optShift"></select></div>
+      <div><label>الشعبة</label><select id="sSection" class="optSection"></select></div>
     </div>
     <div class="row" style="margin-top:10px">
       <button class="btn" id="addStudentBtn">إضافة</button>
       <button class="btn light" id="toggleBulk">إضافة مجموعة (لصق من Excel)</button>
     </div>
     <div id="bulkBox" class="hidden" style="margin-top:10px">
-      <p class="note">الصق سطراً لكل طالب بالترتيب: الرقم الجامعي، الاسم، المرحلة، الدراسة، الشعبة (مفصولة بفاصلة أو منسوخة مباشرة من أعمدة Excel).</p>
+      <p class="note">الصق سطراً لكل طالب بالترتيب: الرقم الجامعي، الاسم، المرحلة، الدراسة، الشعبة. القيم المقبولة لهذا القسم: <span id="allowedVals"></span></p>
       <textarea id="bulkText" placeholder="2025001,أحمد محمد علي حسن,الأولى,صباحي,A"></textarea>
       <button class="btn" id="bulkAddBtn" style="margin-top:8px">استيراد</button>
     </div>
   </div>
   <div class="card">
     <div class="row" style="justify-content:space-between;margin-bottom:10px">
-      <h2 style="margin:0">قائمة الطلبة <span id="studCount" class="badge b-gray"></span></h2>
+      <h2 style="margin:0">طلبة القسم <span id="studCount" class="badge b-gray"></span></h2>
       <div class="row">
-        <select id="fStage" style="width:auto"><option value="">كل المراحل</option><option>الأولى</option><option>الثانية</option><option>الثالثة</option><option>الرابعة</option></select>
-        <select id="fShift" style="width:auto"><option value="">صباحي ومسائي</option><option>صباحي</option><option>مسائي</option></select>
+        <select id="fStage" style="width:auto"></select>
+        <select id="fShift" style="width:auto"></select>
         <select id="fPrint" style="width:auto"><option value="">كل الحالات</option><option value="yes">لديه بصمة</option><option value="no">بدون بصمة</option></select>
         <input id="fSearch" placeholder="بحث بالاسم أو الرقم" style="width:190px">
       </div>
@@ -150,12 +167,12 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <!-- الحضور -->
 <section id="tSession" class="tab">
   <div class="card" id="sessionSetup">
-    <h2>بيانات المحاضرة</h2>
+    <h2>بيانات المحاضرة — <span class="deptName"></span></h2>
     <div class="grid">
       <div><label>المادة</label><input id="cName" list="courseList" placeholder="مثال: المعالجات الدقيقة"><datalist id="courseList"></datalist></div>
-      <div><label>المرحلة</label><select id="cStage"><option>الأولى</option><option>الثانية</option><option>الثالثة</option><option>الرابعة</option></select></div>
-      <div><label>الدراسة</label><select id="cShift"><option>صباحي</option><option>مسائي</option></select></div>
-      <div><label>الشعبة</label><select id="cSection"><option value="">كل الشعب</option><option>A</option><option>B</option><option>C</option></select></div>
+      <div><label>المرحلة</label><select id="cStage" class="optStage"></select></div>
+      <div><label>الدراسة</label><select id="cShift" class="optShift"></select></div>
+      <div><label>الشعبة</label><select id="cSection" class="optSection" data-all="كل الشعب"></select></div>
       <div><label>النوع</label><select id="cType"><option>نظري</option><option>عملي</option></select></div>
       <div><label>عدد الساعات</label><input id="cHours" type="number" min="1" max="6" value="2"></div>
       <div><label>التاريخ</label><input id="cDate" type="date"></div>
@@ -194,17 +211,27 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 
 <!-- السجلات -->
 <section id="tRecords" class="tab">
+  <div class="card" id="overviewCard">
+    <h2>تقرير الحضور على مستوى الكليات والأقسام</h2>
+    <div class="row" style="margin-bottom:10px">
+      <select id="ovCollege" style="width:auto;min-width:240px"></select>
+      <button class="btn" id="ovLoadBtn">عرض التقرير</button>
+      <button class="btn light" id="ovExportBtn">تصدير CSV</button>
+    </div>
+    <p class="note">يُحمَّل عند الطلب فقط للفصل الحالي. "طلبة تجاوزوا ١٠٪" = طلبة تجاوز غيابهم ١٠٪ من الساعات المنعقدة في مادة واحدة على الأقل.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>الكلية</th><th>القسم</th><th>المحاضرات</th><th>الساعات</th><th>نسبة الحضور</th><th>تسجيل بالوجه</th><th>طلبة تجاوزوا ١٠٪</th></tr></thead><tbody id="ovBody"><tr><td colspan="7" class="note">اختر ثم اضغط "عرض التقرير"</td></tr></tbody></table></div>
+  </div>
   <div class="card">
-    <h2>المحاضرات المحفوظة</h2>
-    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>النوع</th><th>الساعات</th><th>التدريسي</th><th>حاضر</th><th>غائب</th><th>الرفع</th><th>إجراءات</th></tr></thead><tbody id="sessionsBody"></tbody></table></div>
+    <h2 id="recTitle">المحاضرات المحفوظة</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>القسم</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>النوع</th><th>الساعات</th><th>التدريسي</th><th>حاضر</th><th>غائب</th><th>الرفع</th><th>إجراءات</th></tr></thead><tbody id="sessionsBody"></tbody></table></div>
   </div>
   <div class="card">
     <h2>ملخّص الغياب حسب المادة</h2>
     <div class="row" style="margin-bottom:10px">
-      <select id="sumCourse" style="width:auto;min-width:260px"></select>
+      <select id="sumCourse" style="width:auto;min-width:300px"></select>
       <button class="btn light" id="sumExportBtn">تصدير CSV</button>
     </div>
-    <p class="note">النسبة = ساعات الغياب ÷ مجموع ساعات المحاضرات المنعقدة لهذه المادة حتى الآن.</p>
+    <p class="note">النسبة = ساعات الغياب ÷ مجموع ساعات المحاضرات المنعقدة لهذه المادة في الفصل الحالي.</p>
     <div class="tbl-wrap"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>ساعات الغياب</th><th>الساعات المنعقدة</th><th>نسبة الغياب</th></tr></thead><tbody id="summaryBody"></tbody></table></div>
   </div>
 </section>
@@ -212,19 +239,46 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <!-- المستخدمون -->
 <section id="tUsers" class="tab">
   <div class="card">
-    <h2>إضافة مستخدم</h2>
-    <div class="grid">
-      <div><label>الاسم</label><input id="uName"></div>
-      <div><label>البريد الإلكتروني</label><input id="uEmail" type="email" dir="ltr"></div>
-      <div><label>كلمة مرور أولية (٦ أحرف على الأقل)</label><input id="uPass" dir="ltr"></div>
-      <div><label>الصلاحية</label><select id="uRole"><option value="instructor">تدريسي</option><option value="registrar">موظف تسجيل</option><option value="admin">رئيس القسم</option></select></div>
+    <div class="row" style="justify-content:space-between;margin-bottom:10px">
+      <h2 style="margin:0">المستخدمون</h2>
+      <div class="row">
+        <input id="uSearch" placeholder="بحث بالاسم أو البريد" style="width:200px">
+        <button class="btn" id="newUserBtn">+ إضافة مستخدم</button>
+      </div>
     </div>
-    <button class="btn" id="addUserBtn" style="margin-top:10px">إنشاء الحساب</button>
-    <p class="note">التدريسي: يأخذ الحضور ويرى سجلات محاضراته فقط. موظف التسجيل: يضيف الطلبة ويسجّل البصمات. رئيس القسم: كل الصلاحيات. يتطلب إنشاء الحساب اتصالاً بالإنترنت.</p>
+    <p class="note">مدير النظام: كل الجامعة. العميد: أقسام كليته كلها. رئيس القسم: قسمه (الطلبة، والحضور، والتقارير، وحسابات التدريسيين والموظفين). موظف التسجيل: الطلبة والبصمات. التدريسي: أخذ الحضور في أقسامه وسجلات محاضراته.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الكلية</th><th>الأقسام</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
+  </div>
+</section>
+
+<!-- الهيكل التنظيمي -->
+<section id="tOrg" class="tab">
+  <div class="card">
+    <h2>الفصل الدراسي الحالي</h2>
+    <div class="row"><input id="orgTerm" style="max-width:320px" placeholder="2026-2027 / الفصل الأول"><button class="btn" id="saveTermBtn">حفظ</button></div>
+    <p class="note">تُنسب كل محاضرة إلى الفصل الحالي، والتقارير تعرض الفصل الحالي فقط. غيّره عند بداية كل فصل.</p>
   </div>
   <div class="card">
-    <h2>المستخدمون</h2>
-    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th></tr></thead><tbody id="usersBody"></tbody></table></div>
+    <h2>الكليات</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input id="colId" placeholder="رمز إنجليزي قصير مثل: tech-eng" dir="ltr" style="max-width:220px">
+      <input id="colName" placeholder="اسم الكلية" style="max-width:320px">
+      <button class="btn" id="saveCollegeBtn">إضافة / تعديل</button>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>الرمز</th><th>اسم الكلية</th><th>عدد الأقسام</th><th></th></tr></thead><tbody id="collegesBody"></tbody></table></div>
+  </div>
+  <div class="card">
+    <h2>الأقسام</h2>
+    <div class="grid">
+      <div><label>الكلية</label><select id="depCollege"></select></div>
+      <div><label>رمز القسم (إنجليزي، لا يتغير لاحقاً)</label><input id="depId" dir="ltr" placeholder="ai-eng"></div>
+      <div><label>اسم القسم</label><input id="depName" placeholder="هندسة تقنيات الذكاء الاصطناعي"></div>
+      <div><label>المراحل (مفصولة بفاصلة)</label><input id="depStages" value="الأولى,الثانية,الثالثة,الرابعة"></div>
+      <div><label>الدراسة</label><div class="row" style="padding-top:6px"><label style="display:flex;gap:4px;margin:0;color:#1c2733"><input type="checkbox" id="depMorning" checked style="width:auto">صباحي</label><label style="display:flex;gap:4px;margin:0;color:#1c2733"><input type="checkbox" id="depEvening" checked style="width:auto">مسائي</label></div></div>
+      <div><label>الشعب (مفصولة بفاصلة)</label><input id="depSections" value="A,B" dir="ltr"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="saveDeptBtn">إضافة / تعديل القسم</button><button class="btn light" id="clearDeptBtn">تفريغ الحقول</button></div>
+    <div class="tbl-wrap" style="margin-top:12px"><table><thead><tr><th>الكلية</th><th>الرمز</th><th>القسم</th><th>المراحل</th><th>الدراسة</th><th>الشعب</th><th></th></tr></thead><tbody id="deptsBody"></tbody></table></div>
   </div>
 </section>
 
@@ -241,18 +295,15 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     <div class="row" style="margin-top:12px"><button class="btn" id="saveSettingsBtn">حفظ الإعدادات</button><button class="btn light" id="listCamsBtn">تحديث قائمة الكاميرات</button></div>
   </div>
   <div class="card" id="backupCard">
-    <h2>النسخ الاحتياطي</h2>
-    <p class="note">لا تُحفظ صور الطلبة إطلاقاً، بل البصمات الرقمية فقط.</p>
+    <h2>النسخ الاحتياطي للقسم المختار</h2>
+    <p class="note">ينزّل طلبة القسم وبصماتهم ومحاضرات الفصل الحالي في ملف واحد. لا تُحفظ صور الطلبة إطلاقاً.</p>
     <div class="row">
       <button class="btn" id="backupBtn">تنزيل نسخة احتياطية (JSON)</button>
-      <label class="btn light" style="margin:0;color:var(--navy)">استعادة / استيراد نسخة<input type="file" id="restoreInput" accept=".json" class="hidden"></label>
-      <button class="btn red" id="clearAllBtn">حذف كل البيانات المحلية</button>
+      <label class="btn light" style="margin:0;color:var(--navy)">استيراد نسخة إلى القسم المختار<input type="file" id="restoreInput" accept=".json" class="hidden"></label>
+      <button class="btn red hidden" id="clearAllBtn">حذف كل البيانات المحلية</button>
     </div>
   </div>
-  <div class="card">
-    <h2>حول التطبيق</h2>
-    <p class="note" id="aboutText"></p>
-  </div>
+  <div class="card"><h2>حول التطبيق</h2><p class="note" id="aboutText"></p></div>
 </section>
 </main>
 </div>
@@ -274,6 +325,27 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     <div class="row" style="margin-top:12px;justify-content:flex-end">
       <button class="btn light" id="enrollCancel">إلغاء</button>
       <button class="btn" id="enrollSave" disabled>حفظ البصمة</button>
+    </div>
+  </div>
+</div>
+
+<!-- نافذة المستخدم -->
+<div class="modal-bg" id="userModal">
+  <div class="modal">
+    <h3 id="userModalTitle">إضافة مستخدم</h3>
+    <div class="grid">
+      <div><label>الاسم</label><input id="umName"></div>
+      <div><label>البريد الإلكتروني</label><input id="umEmail" type="email" dir="ltr"></div>
+      <div id="umPassBox"><label>كلمة مرور أولية (٦ أحرف على الأقل)</label><input id="umPass" dir="ltr"></div>
+      <div><label>الصلاحية</label><select id="umRole"></select></div>
+      <div><label>الكلية</label><select id="umCollege"></select></div>
+    </div>
+    <label style="margin-top:10px">الأقسام (للتدريسي الذي يدرّس في أكثر من قسم اختر كل أقسامه)</label>
+    <div class="chk-list" id="umDepts"></div>
+    <p class="note" id="umNote"></p>
+    <div class="row" style="margin-top:12px;justify-content:flex-end">
+      <button class="btn light" id="umCancel">إلغاء</button>
+      <button class="btn" id="umSave">حفظ</button>
     </div>
   </div>
 </div>

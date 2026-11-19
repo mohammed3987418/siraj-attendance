@@ -1,22 +1,33 @@
 'use strict';
 /* =====================================================================
-   نظام حضور الطلبة ببصمة الوجه — PWA
-   جامعة السراج — قسم هندسة تقنيات الذكاء الاصطناعي
+   نظام حضور الطلبة ببصمة الوجه — جامعة السراج (متعدد الكليات والأقسام)
    - التعرف على الوجه داخل المتصفح (face-api) بدون خادم
    - Firebase Auth + Firestore مع العمل دون اتصال والمزامنة التلقائية
    - إن لم تُملأ firebase-config.js يعمل بوضع محلي تجريبي
+   البيانات:
+     att_org/main          : الفصل الحالي + الكليات + الأقسام (مراحل/دراسة/شعب)
+     att_users/{uid}       : الدور + الكلية + الأقسام
+     att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
+     att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '3.0.0';
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
-const ROLES = {admin:'رئيس القسم', registrar:'موظف تسجيل', instructor:'تدريسي', disabled:'معطّل'};
+const ROLES = {super:'مدير النظام', dean:'عميد الكلية', head:'رئيس القسم', registrar:'موظف تسجيل', instructor:'تدريسي', disabled:'معطّل'};
+const ACTIVE_ROLES = ['super','dean','head','registrar','instructor'];
 const TAB_ROLES = {
-  tStudents:['admin','registrar'], tSession:['admin','instructor'], tRecords:['admin','instructor'],
-  tUsers:['admin'], tSettings:['admin','registrar','instructor']
+  tStudents:['super','dean','head','registrar'], tSession:['super','dean','head','instructor'],
+  tRecords:['super','dean','head','instructor'], tUsers:['super','dean','head'], tOrg:['super'], tSettings:ACTIVE_ROLES
 };
-let db = null, auth = null;
+const DEFAULT_ORG = {
+  term:'2026-2027 / الفصل الأول',
+  colleges:{'tech-eng':{name:'الكلية التقنية الهندسية'}},
+  depts:{'ai-eng':{name:'هندسة تقنيات الذكاء الاصطناعي', collegeId:'tech-eng', stages:['الأولى','الثانية','الثالثة','الرابعة'], shifts:['صباحي','مسائي'], sections:['A','B']}}
+};
+const normRole = r => r === 'admin' ? 'super' : r;
 
 /* ============ أدوات عامة ============ */
 const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
@@ -24,7 +35,7 @@ const LS = {
 };
 function toast(msg, type=''){
   const t = document.createElement('div'); t.className = 'toast ' + type; t.textContent = msg;
-  $('#toasts').appendChild(t); setTimeout(() => t.remove(), 4000);
+  $('#toasts').appendChild(t); setTimeout(() => t.remove(), 4500);
 }
 function confirmBox(title, text, yes='تأكيد'){
   return new Promise(res => {
@@ -42,7 +53,11 @@ function download(name, text, mime='text/plain'){
 const toCSV = rows => '﻿' + rows.map(r => r.map(v => '"' + String(v ?? '').replace(/"/g,'""') + '"').join(',')).join('\r\n');
 const hhmm = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
-const cleanId = s => String(s || '').trim().replace(/[\/#?\[\]]/g, '-');
+const nowISO = () => new Date().toISOString();
+const cleanId = s => String(s ?? '').trim().replace(/[^\w-]/g, '-');
+const slugOk = s => /^[a-z0-9][a-z0-9-]{1,30}$/.test(s);
+const splitList = s => String(s || '').split(/[,،]/).map(x => x.trim()).filter(Boolean);
+const strip = o => { const {_pending, ...x} = o; return x; };
 const fbErr = e => {
   const m = {
     'auth/invalid-credential':'البريد أو كلمة المرور غير صحيحة', 'auth/wrong-password':'كلمة المرور غير صحيحة',
@@ -53,9 +68,8 @@ const fbErr = e => {
   };
   return (e && m[e.code]) || (e && e.message) || String(e);
 };
-// كتابة في الخلفية: لا ننتظرها لأن Firestore يحفظها محلياً ويرفعها عند الاتصال
 const bg = (p, okMsg) => p.then(() => { if (okMsg) toast(okMsg, 'ok'); }).catch(e => { console.error(e); toast('فشل الحفظ على الخادم: ' + fbErr(e), 'err'); });
-const can = (...roles) => Store.user && roles.includes(Store.user.role);
+const onErr = e => { console.error(e); toast('خطأ في المزامنة: ' + fbErr(e), 'err'); };
 
 /* ============ إعدادات الجهاز ============ */
 const Settings = {
@@ -63,192 +77,219 @@ const Settings = {
   save(s){ LS.set('fa_settings', s); }
 };
 
+/* ============ ضغط البصمة: 128 رقماً → 172 حرفاً (int8 + base64) ============ */
+function encDesc(d){
+  let s = '';
+  for (let i = 0; i < 128; i++){ const v = Math.max(-127, Math.min(127, Math.round(d[i] * 254))); s += String.fromCharCode(v & 255); }
+  return btoa(s);
+}
+function decDesc(str){
+  const s = atob(str), f = new Float32Array(128);
+  for (let i = 0; i < 128; i++){ let v = s.charCodeAt(i); if (v > 127) v -= 256; f[i] = v / 254; }
+  return f;
+}
+
 /* =====================================================================
-   طبقة البيانات (محلي أو Firebase)
-   المجموعات: att_users, att_students, att_faceprints, att_sessions
+   طبقة قاعدة البيانات: نفس الواجهة لـ Firestore وللوضع المحلي
+   filters = [[field, value], ...] (تساوي فقط)
    ===================================================================== */
-const Store = {
-  mode:'local', user:null, students:[], prints:{}, sessions:[], users:[], pending:0, unsub:[],
+const DEL = {__del:true};
+const isDel = v => v && typeof v === 'object' && v.__del === true;
+const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+const clone = v => JSON.parse(JSON.stringify(v));
 
-  changed(){ renderAll(); },
-  student(id){ return this.students.find(s => s.id === id); },
-  nameOf(id){
-    const s = this.student(id); if (s) return s.name;
-    for (const x of this.sessions){ if (x.names && x.names[id]) return x.names[id]; }
-    return id;
+const LFS = { // محاكاة محلية
+  d:{}, subs:[],
+  load(){ this.d = LS.get('fa3_db', {}); },
+  persist(){ LS.set('fa3_db', this.d); setTimeout(() => this.subs.slice().forEach(s => s.run()), 0); },
+  col(c){ return this.d[c] || (this.d[c] = {}); },
+  merge(a, b){ Object.entries(b).forEach(([k, v]) => { if (isDel(v)) delete a[k]; else if (isObj(v) && isObj(a[k])) this.merge(a[k], v); else a[k] = clone(v); }); return a; },
+  async get(c, id){ const x = this.col(c)[id]; return x ? Object.assign({id}, clone(x)) : null; },
+  set(c, id, data, merge){
+    id = id || ('L' + Date.now() + Math.random().toString(36).slice(2, 6));
+    const col = this.col(c);
+    col[id] = merge && col[id] ? this.merge(col[id], data) : this.merge({}, data);
+    this.persist(); return {id, p:Promise.resolve()};
   },
-
-  /* ---------- محلي ---------- */
-  loadLocal(){
-    this.students = LS.get('fa_students', []); this.prints = LS.get('fa_prints', {}); this.sessions = LS.get('fa_sessions', []);
-    let mig = false; // ترحيل بيانات النسخة الأولى
-    this.students.forEach(s => {
-      if ('descriptors' in s){
-        if (s.descriptors && s.descriptors.length) this.prints[s.id] = {samples:s.descriptors, consent:!!s.consent, enrolledAt:s.enrolledAt, stage:s.stage, shift:s.shift, section:s.section};
-        delete s.descriptors; delete s.consent; delete s.enrolledAt; mig = true;
-      }
+  update(c, id, patch){
+    const doc = this.col(c)[id]; if (!doc) return {p:Promise.reject(new Error('المستند غير موجود'))};
+    Object.entries(patch).forEach(([k, v]) => {
+      const path = k.split('.'); let o = doc;
+      for (let i = 0; i < path.length - 1; i++){ if (!isObj(o[path[i]])) o[path[i]] = {}; o = o[path[i]]; }
+      const last = path[path.length - 1]; if (isDel(v)) delete o[last]; else o[last] = clone(v);
     });
-    if (mig) this.persistLocal();
+    this.persist(); return {p:Promise.resolve()};
   },
-  persistLocal(){ LS.set('fa_students', this.students); LS.set('fa_prints', this.prints); LS.set('fa_sessions', this.sessions); },
-
-  /* ---------- Firebase ---------- */
-  subscribe(){
-    const u = this.user, err = e => { console.error(e); toast('خطأ في المزامنة: ' + fbErr(e), 'err'); };
-    if (u.role === 'admin' || u.role === 'registrar'){
-      this.unsub.push(db.collection('att_students').onSnapshot(q => {
-        this.students = q.docs.map(d => Object.assign({id:d.id}, d.data())).sort((a,b) => a.id.localeCompare(b.id, 'en', {numeric:true}));
-        this.changed();
-      }, err));
-      this.unsub.push(db.collection('att_faceprints').onSnapshot(q => {
-        const p = {}; q.docs.forEach(d => p[d.id] = this.fromPrintDoc(d.data())); this.prints = p; this.changed();
-      }, err));
-    }
-    if (u.role === 'admin' || u.role === 'instructor'){
-      let q = db.collection('att_sessions');
-      if (u.role === 'instructor') q = q.where('instructorUid', '==', u.uid);
-      this.unsub.push(q.onSnapshot({includeMetadataChanges:true}, s => {
-        this.sessions = s.docs.map(d => Object.assign({id:d.id, _pending:d.metadata.hasPendingWrites}, d.data()));
-        this.pending = this.sessions.filter(x => x._pending).length;
-        this.changed();
-      }, err));
-    }
-    if (u.role === 'admin'){
-      this.unsub.push(db.collection('att_users').onSnapshot(q => {
-        this.users = q.docs.map(d => Object.assign({uid:d.id}, d.data())); this.changed();
-      }, err));
-    }
-  },
-  stop(){
-    this.unsub.forEach(f => { try{ f(); }catch(e){} });
-    this.unsub = []; this.students = []; this.prints = {}; this.sessions = []; this.users = []; this.pending = 0;
-  },
-  fromPrintDoc(x){ return {samples:(x.samples || []).map(s => s.v), consent:!!x.consent, enrolledAt:x.enrolledAt || null, stage:x.stage, shift:x.shift, section:x.section}; },
-
-  /* ---------- العمليات ---------- */
-  addStudents(list){
-    const exist = new Set(this.students.map(s => s.id)), fresh = []; let dup = 0;
-    list.forEach(s => {
-      const id = cleanId(s.id); if (!id || !s.name) return;
-      if (exist.has(id)){ dup++; return; } exist.add(id);
-      fresh.push({id, name:String(s.name).trim(), stage:s.stage || 'الأولى', shift:s.shift || 'صباحي', section:s.section || 'A'});
-    });
-    if (this.mode === 'local'){ this.students.push(...fresh); this.persistLocal(); this.changed(); }
-    else {
-      for (let i = 0; i < fresh.length; i += 400){
-        const b = db.batch();
-        fresh.slice(i, i+400).forEach(s => { const {id, ...d} = s; b.set(db.collection('att_students').doc(id), d); });
-        bg(b.commit());
-      }
-    }
-    return {added:fresh.length, dup};
-  },
-  deleteStudent(id){
-    if (this.mode === 'local'){ this.students = this.students.filter(s => s.id !== id); delete this.prints[id]; this.persistLocal(); this.changed(); }
-    else { bg(db.collection('att_students').doc(id).delete()); bg(db.collection('att_faceprints').doc(id).delete()); }
-  },
-  savePrint(id, samples){
-    const s = this.student(id);
-    const p = {samples, consent:true, enrolledAt:new Date().toISOString(), stage:s.stage, shift:s.shift, section:s.section};
-    if (this.mode === 'local'){ this.prints[id] = p; this.persistLocal(); this.changed(); }
-    else bg(db.collection('att_faceprints').doc(id).set(Object.assign({}, p, {samples:samples.map(v => ({v})), by:this.user.uid})));
-  },
-  clearPrint(id){
-    if (this.mode === 'local'){ delete this.prints[id]; this.persistLocal(); this.changed(); }
-    else bg(db.collection('att_faceprints').doc(id).delete());
-  },
-  // تحميل طلبة وبصمات المرحلة/الدراسة عند بدء المحاضرة (يقلل القراءات للتدريسيين)
-  async loadRoster(stage, shift){
-    if (this.mode === 'local' || this.user.role !== 'instructor'){
-      const students = this.students.filter(s => s.stage === stage && s.shift === shift);
-      const prints = {}; students.forEach(s => { if (this.prints[s.id] && this.prints[s.id].samples.length) prints[s.id] = this.prints[s.id].samples; });
-      return {students, prints};
-    }
-    const [qs, qp] = await Promise.all([
-      db.collection('att_students').where('stage','==',stage).where('shift','==',shift).get(),
-      db.collection('att_faceprints').where('stage','==',stage).where('shift','==',shift).get()
-    ]);
-    const students = qs.docs.map(d => Object.assign({id:d.id}, d.data()));
-    const prints = {}; qp.docs.forEach(d => { const p = this.fromPrintDoc(d.data()); if (p.samples.length) prints[d.id] = p.samples; });
-    return {students, prints};
-  },
-  saveSession(rec){
-    if (this.mode === 'local'){
-      rec.id = 'S' + Date.now(); this.sessions.push(rec);
-      if (LS.set('fa_sessions', this.sessions)) toast('تم حفظ حضور المحاضرة', 'ok');
-      this.changed(); return;
-    }
-    const ref = db.collection('att_sessions').doc();
-    bg(ref.set(rec), 'تم رفع حضور المحاضرة إلى الخادم ✓');
-    if (!navigator.onLine) toast('لا يوجد إنترنت: حُفظ الحضور على الجهاز وسيُرفع تلقائياً عند عودة الاتصال', 'ok');
-  },
-  deleteSession(id){
-    if (this.mode === 'local'){ this.sessions = this.sessions.filter(x => x.id !== id); this.persistLocal(); this.changed(); }
-    else bg(db.collection('att_sessions').doc(id).delete());
-  },
-  async addUser({name, email, password, role}){
-    const sec = firebase.apps.find(a => a.name === 'secondary') || firebase.initializeApp(window.FIREBASE_CONFIG, 'secondary');
-    const cred = await sec.auth().createUserWithEmailAndPassword(email, password);
-    await sec.auth().signOut();
-    await db.collection('att_users').doc(cred.user.uid).set({name, email, role, createdAt:new Date().toISOString()});
-  },
-  setRole(uid, role){ bg(db.collection('att_users').doc(uid).update({role}), 'تم تحديث الصلاحية'); },
-  exportData(){
-    return {app:'siraj-attendance', version:APP_VERSION, exportedAt:new Date().toISOString(),
-      students:this.students, prints:this.prints, sessions:this.sessions.map(({_pending, ...x}) => x)};
-  },
-  importData(d){
-    const students = d.students || [], prints = d.prints || {}, sessions = d.sessions || [];
-    if (this.mode === 'local'){ this.students = students; this.prints = prints; this.sessions = sessions; this.persistLocal(); this.changed(); return; }
-    const ops = [];
-    students.forEach(s => { const {id, ...x} = s; ops.push(b => b.set(db.collection('att_students').doc(cleanId(id)), x)); });
-    Object.entries(prints).forEach(([id, p]) => ops.push(b => b.set(db.collection('att_faceprints').doc(cleanId(id)),
-      Object.assign({}, p, {samples:(p.samples || []).map(v => ({v})), by:this.user.uid}))));
-    sessions.forEach(s => { const {id, ...x} = s; ops.push(b => b.set(id ? db.collection('att_sessions').doc(cleanId(id)) : db.collection('att_sessions').doc(), x)); });
-    for (let i = 0; i < ops.length; i += 400){ const b = db.batch(); ops.slice(i, i+400).forEach(f => f(b)); bg(b.commit()); }
-  }
+  del(c, id){ delete this.col(c)[id]; this.persist(); return {p:Promise.resolve()}; },
+  async query(c, f=[]){ return Object.entries(this.col(c)).filter(([, x]) => f.every(([k, v]) => x[k] === v)).map(([id, x]) => Object.assign({id}, clone(x))); },
+  listen(c, f, cb){ const s = {run:() => this.query(c, f).then(l => cb(l))}; this.subs.push(s); s.run(); return () => { this.subs = this.subs.filter(x => x !== s); }; },
+  listenDoc(c, id, cb){ const s = {run:() => this.get(c, id).then(cb)}; this.subs.push(s); s.run(); return () => { this.subs = this.subs.filter(x => x !== s); }; }
 };
 
+let db = null, auth = null;
+const FS = { // Firestore
+  conv(v){ if (isDel(v)) return firebase.firestore.FieldValue.delete(); if (isObj(v)){ const o = {}; Object.entries(v).forEach(([k, x]) => o[k] = this.conv(x)); return o; } return v; },
+  q(c, f=[]){ let q = db.collection(c); f.forEach(([k, v]) => q = q.where(k, '==', v)); return q; },
+  async get(c, id){ const d = await db.collection(c).doc(id).get(); return d.exists ? Object.assign({id:d.id}, d.data()) : null; },
+  set(c, id, data, merge){ const ref = id ? db.collection(c).doc(id) : db.collection(c).doc(); return {id:ref.id, p:ref.set(this.conv(data), {merge:!!merge})}; },
+  update(c, id, patch){ return {p:db.collection(c).doc(id).update(this.conv(patch))}; },
+  del(c, id){ return {p:db.collection(c).doc(id).delete()}; },
+  async query(c, f){ return (await this.q(c, f).get()).docs.map(d => Object.assign({id:d.id}, d.data())); },
+  listen(c, f, cb, err){
+    return this.q(c, f).onSnapshot({includeMetadataChanges:true},
+      s => cb(s.docs.map(d => Object.assign({id:d.id, _pending:d.metadata.hasPendingWrites}, d.data()))), err || onErr);
+  },
+  listenDoc(c, id, cb, err){ return db.collection(c).doc(id).onSnapshot(d => cb(d.exists ? Object.assign({id:d.id}, d.data()) : null), err || onErr); }
+};
+let DB = LFS;
+
+/* =====================================================================
+   حالة التطبيق والصلاحيات
+   ===================================================================== */
+const App = {mode:'local', user:null, org:null, dept:null, packs:{}, sessions:[], users:[], pending:0, subs:{}, term:null};
+const role = () => App.user ? App.user.role : null;
+const is = (...r) => r.includes(role());
+const canManageStudents = () => is('super','dean','head','registrar');
+function unsub(key){ if (App.subs[key]){ try{ App.subs[key](); }catch(e){} delete App.subs[key]; } }
+function unsubAll(){ Object.keys(App.subs).forEach(unsub); }
+const deptList = () => Object.entries((App.org || {}).depts || {}).map(([id, d]) => Object.assign({id}, d));
+const collegeName = id => (((App.org || {}).colleges || {})[id] || {}).name || id || '';
+const deptName = id => (((App.org || {}).depts || {})[id] || {}).name || id || '';
+function allowedDepts(){
+  const u = App.user, all = deptList();
+  if (!u) return [];
+  if (u.role === 'super') return all;
+  if (u.role === 'dean') return all.filter(d => d.collegeId === u.collegeId);
+  const ids = u.deptIds || []; return all.filter(d => ids.includes(d.id));
+}
+const packId = (deptId, stage, shift) => `${deptId}~${stage}~${shift}`;
+
 /* ============ الواجهة العامة ============ */
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+$$('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 function showTab(id){
-  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
-  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x.id === id));
+  $$('nav button').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
+  $$('.tab').forEach(x => x.classList.toggle('active', x.id === id));
 }
 function applyRole(){
-  const r = Store.user.role; let first = null;
-  document.querySelectorAll('nav button').forEach(b => {
+  const r = role(); let first = null;
+  $$('nav button').forEach(b => {
     let ok = TAB_ROLES[b.dataset.tab].includes(r);
-    if (b.dataset.tab === 'tUsers' && Store.mode === 'local') ok = false;
     b.classList.toggle('hidden', !ok); if (ok && !first) first = b.dataset.tab;
   });
-  showTab(first);
-  $('#userBox').textContent = `${Store.user.name || Store.user.email || ''} — ${ROLES[r]}`;
-  $('#logoutBtn').classList.toggle('hidden', Store.mode === 'local');
-  $('#localBanner').classList.toggle('hidden', Store.mode !== 'local');
-  $('#backupCard').classList.toggle('hidden', r !== 'admin');
-  $('#clearAllBtn').classList.toggle('hidden', Store.mode !== 'local');
-  $('#aboutText').innerHTML = `الإصدار ${APP_VERSION} — وضع التشغيل: ${Store.mode === 'local' ? 'محلي تجريبي' : 'Firebase (مشروع ' + esc((window.FIREBASE_CONFIG || {}).projectId) + ')'}.<br>
+  const cur = $$('nav button').find(b => b.classList.contains('active') && !b.classList.contains('hidden'));
+  showTab(cur ? cur.dataset.tab : first);
+  $('#userBox').textContent = `${App.user.name || App.user.email || ''} — ${ROLES[r]}`;
+  $('#logoutBtn').classList.toggle('hidden', App.mode === 'local');
+  $('#localBanner').classList.toggle('hidden', App.mode !== 'local');
+  $('#backupCard').classList.toggle('hidden', !canManageStudents());
+  $('#clearAllBtn').classList.toggle('hidden', App.mode !== 'local');
+  $('#overviewCard').classList.toggle('hidden', !is('super','dean'));
+  $('#aboutText').innerHTML = `الإصدار ${APP_VERSION} — وضع التشغيل: ${App.mode === 'local' ? 'محلي تجريبي' : 'Firebase (مشروع ' + esc((window.FIREBASE_CONFIG || {}).projectId) + ')'}.<br>
     التعرف على الوجه يجري بالكامل داخل هذا الجهاز، ويعمل التطبيق دون إنترنت بعد أول فتح.`;
 }
-function showApp(){ $('#loginView').classList.add('hidden'); $('#appView').classList.remove('hidden'); applyRole(); renderAll(); }
+function showApp(){ $('#loginView').classList.add('hidden'); $('#appView').classList.remove('hidden'); }
 function showLogin(msg){
   $('#appView').classList.add('hidden'); $('#loginView').classList.remove('hidden');
   if (msg !== undefined) $('#loginErr').textContent = msg;
   $('#loginBtn').disabled = false;
 }
-function renderAll(){
-  if (!Store.user) return;
-  renderStudents(); renderRecords(); renderUsers(); updateConn(); renderCourseList();
-}
 function updateConn(){
   const el = $('#conn');
-  if (Store.mode === 'local'){ el.textContent = 'وضع محلي'; el.className = 'pill warn'; return; }
-  if (!navigator.onLine){ el.textContent = 'غير متصل — يعمل على الجهاز' + (Store.pending ? ` (${Store.pending} بانتظار الرفع)` : ''); el.className = 'pill warn'; return; }
-  if (Store.pending){ el.textContent = `جارٍ رفع ${Store.pending} محاضرة...`; el.className = 'pill warn'; return; }
-  el.textContent = 'متصل ✓ — كل البيانات مرفوعة'; el.className = 'pill ok';
+  if (App.mode === 'local'){ el.textContent = 'وضع محلي'; el.className = 'pill warn'; return; }
+  if (!navigator.onLine){ el.textContent = 'غير متصل — يعمل على الجهاز' + (App.pending ? ` (${App.pending} بانتظار الرفع)` : ''); el.className = 'pill warn'; return; }
+  if (App.pending){ el.textContent = `جارٍ رفع ${App.pending} محاضرة...`; el.className = 'pill warn'; return; }
+  el.textContent = 'متصل ✓'; el.className = 'pill ok';
 }
 window.addEventListener('online', updateConn); window.addEventListener('offline', updateConn);
+
+/* ============ نطاق العمل (الكلية / القسم) ============ */
+function renderScope(){
+  const depts = allowedDepts();
+  $('#noDeptBanner').classList.toggle('hidden', depts.length > 0 || is('super'));
+  const colIds = [...new Set(depts.map(d => d.collegeId))];
+  const saved = LS.get('fa_scope', {});
+  let col = $('#scopeCollege').value || saved.collegeId;
+  if (!colIds.includes(col)) col = colIds[0] || '';
+  $('#scopeCollege').innerHTML = colIds.map(c => `<option value="${esc(c)}">${esc(collegeName(c))}</option>`).join('') || '<option value="">—</option>';
+  $('#scopeCollege').value = col;
+  const ds = depts.filter(d => d.collegeId === col);
+  let dep = (App.dept && App.dept.id) || saved.deptId;
+  if (!ds.some(d => d.id === dep)) dep = ds[0] ? ds[0].id : '';
+  $('#scopeDept').innerHTML = ds.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('') || '<option value="">—</option>';
+  $('#scopeDept').value = dep;
+  $('#termBox').textContent = App.org ? 'الفصل الحالي: ' + App.org.term : '';
+  setDept(dep);
+}
+$('#scopeCollege').onchange = () => {
+  if (sess){ toast('أنهِ المحاضرة الجارية أولاً', 'err'); $('#scopeCollege').value = App.dept.collegeId; return; }
+  App.dept = null; renderScope();
+};
+$('#scopeDept').onchange = () => setDept($('#scopeDept').value);
+function setDept(id){
+  if (sess){
+    if (App.dept && App.dept.id !== id){ toast('أنهِ المحاضرة الجارية أولاً', 'err'); $('#scopeDept').value = App.dept.id; }
+    return;
+  }
+  const d = deptList().find(x => x.id === id) || null;
+  const changed = (App.dept && App.dept.id) !== (d && d.id) || App.term !== (App.org && App.org.term) ||
+                  JSON.stringify(App.dept) !== JSON.stringify(d);
+  App.dept = d;
+  if (d) LS.set('fa_scope', {collegeId:d.collegeId, deptId:d.id});
+  $$('.deptName').forEach(e => e.textContent = d ? d.name : '—');
+  fillDeptOptions();
+  if (changed){ App.term = App.org && App.org.term; subPacks(); subSessions(); }
+}
+function fillDeptOptions(){
+  const d = App.dept || {stages:[], shifts:[], sections:[]};
+  const opts = (arr, all) => (all ? `<option value="">${all}</option>` : '') + (arr || []).map(x => `<option>${esc(x)}</option>`).join('');
+  $$('select.optStage').forEach(s => { const v = s.value; s.innerHTML = opts(d.stages); if ((d.stages || []).includes(v)) s.value = v; });
+  $$('select.optShift').forEach(s => { const v = s.value; s.innerHTML = opts(d.shifts); if ((d.shifts || []).includes(v)) s.value = v; });
+  $$('select.optSection').forEach(s => { const v = s.value; s.innerHTML = opts(d.sections, s.dataset.all); if ((d.sections || []).includes(v)) s.value = v; });
+  $('#fStage').innerHTML = opts(d.stages, 'كل المراحل'); $('#fShift').innerHTML = opts(d.shifts, 'كل الدراسات');
+  $('#allowedVals').textContent = `المراحل: ${(d.stages || []).join('، ')} — الدراسة: ${(d.shifts || []).join('، ')} — الشعب: ${(d.sections || []).join('، ')}`;
+}
+
+/* ============ الاشتراكات ============ */
+function subPacks(){
+  unsub('packs'); App.packs = {};
+  const d = App.dept;
+  if (d && canManageStudents()){
+    const f = is('dean') ? [['collegeId', d.collegeId], ['deptId', d.id]] : [['deptId', d.id]];
+    App.subs.packs = DB.listen('att_packs', f, list => { App.packs = Object.fromEntries(list.map(p => [p.id, p])); renderStudents(); });
+  }
+  renderStudents();
+}
+function subSessions(){
+  unsub('sessions'); App.sessions = []; App.pending = 0;
+  const u = App.user, d = App.dept, T = App.org && App.org.term;
+  let f = null;
+  if (u.role === 'instructor') f = [['instructorUid', u.uid], ['term', T]];
+  else if (u.role === 'registrar' || !d) f = null;
+  else if (u.role === 'dean') f = [['collegeId', d.collegeId], ['deptId', d.id], ['term', T]];
+  else f = [['deptId', d.id], ['term', T]];
+  if (f) App.subs.sessions = DB.listen('att_sessions', f, list => {
+    App.sessions = list; App.pending = list.filter(x => x._pending).length;
+    renderRecords(); renderCourseList(); updateConn();
+  });
+  renderRecords(); renderCourseList(); updateConn();
+}
+function subUsers(){
+  unsub('users'); App.users = [];
+  if (!is('super','dean','head')) return;
+  const f = is('super') ? [] : [['collegeId', App.user.collegeId || '']];
+  App.subs.users = DB.listen('att_users', f, list => { App.users = list; renderUsers(); });
+}
+function subOrg(){
+  unsub('org');
+  App.subs.org = DB.listenDoc('att_org', 'main', doc => {
+    if (!doc){
+      if (is('super')){ bg(DB.set('att_org', 'main', DEFAULT_ORG).p); return; }
+      $('#noDeptBanner').textContent = 'لم يُعدّ الهيكل التنظيمي بعد. راجع مدير النظام.'; $('#noDeptBanner').classList.remove('hidden');
+      return;
+    }
+    App.org = doc; renderScope(); renderOrg(); renderOverviewOptions();
+  });
+}
 
 /* ============ PWA ============ */
 let deferredInstall = null;
@@ -264,14 +305,12 @@ function registerSW(){
   navigator.serviceWorker.register('./sw.js').then(reg => {
     reg.addEventListener('updatefound', () => {
       const w = reg.installing;
-      w && w.addEventListener('statechange', () => {
-        if (w.state === 'installed' && navigator.serviceWorker.controller) toast('يتوفر تحديث للتطبيق — أعد فتحه لتطبيقه', 'ok');
-      });
+      w && w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) toast('يتوفر تحديث للتطبيق — أعد فتحه لتطبيقه', 'ok'); });
     });
   }).catch(e => console.warn('SW', e));
 }
 
-/* ============ تحميل نماذج التعرف ============ */
+/* ============ نماذج التعرف والكاميرا ============ */
 let modelsReady = false;
 function setModelStatus(t, c=''){ const el = $('#modelStatus'); el.textContent = t; el.className = 'pill ' + c; }
 async function loadModels(){
@@ -288,8 +327,6 @@ async function loadModels(){
     modelsReady = true; setModelStatus('نماذج الوجه جاهزة ✓', 'ok');
   }catch(e){ console.error(e); setModelStatus('فشل تحميل نماذج الوجه — يلزم إنترنت لأول مرة', 'err'); }
 }
-
-/* ============ الكاميرا والكشف ============ */
 async function startCamera(video){
   const s = Settings.get();
   const v = s.cameraId ? {deviceId:{exact:s.cameraId}, width:{ideal:640}, height:{ideal:480}} : {facingMode:'user', width:{ideal:640}, height:{ideal:480}};
@@ -301,20 +338,18 @@ const detOpts = () => new faceapi.SsdMobilenetv1Options({minConfidence:0.5, maxR
 const boxArea = r => r.detection.box.width * r.detection.box.height;
 async function detectFaces(input){
   const res = await faceapi.detectAllFaces(input, detOpts()).withFaceLandmarks().withFaceDescriptors();
-  return res.sort((a,b) => boxArea(b) - boxArea(a));
+  return res.sort((a, b) => boxArea(b) - boxArea(a));
 }
 function drawBoxes(canvas, video, faces, color){
   canvas.width = video.videoWidth; canvas.height = video.videoHeight;
   const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.lineWidth = 4;
   faces.forEach((f, i) => { const b = f.detection.box; ctx.strokeStyle = i === 0 ? color : '#999'; ctx.strokeRect(b.x, b.y, b.width, b.height); });
 }
-const dist = (a,b) => Math.hypot(a.x-b.x, a.y-b.y);
-function eyeAR(p){ const e = i => (dist(p[i+1],p[i+5]) + dist(p[i+2],p[i+4])) / (2*dist(p[i],p[i+3])); return (e(36) + e(42)) / 2; }
+const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+function eyeAR(p){ const e = i => (dist(p[i+1], p[i+5]) + dist(p[i+2], p[i+4])) / (2 * dist(p[i], p[i+3])); return (e(36) + e(42)) / 2; }
 function yawRatio(p){ const l = p[36], r = p[45], n = p[30]; return (n.x - l.x) / (r.x - l.x); }
-const descToArr = d => Array.from(d).map(v => +v.toFixed(5));
-function buildMatcher(prints, threshold){
-  const labeled = Object.entries(prints).filter(([,s]) => s && s.length)
-    .map(([id, s]) => new faceapi.LabeledFaceDescriptors(id, s.map(d => new Float32Array(d))));
+function buildMatcher(prints, threshold){ // prints: {id: Float32Array[]}
+  const labeled = Object.entries(prints).filter(([, s]) => s && s.length).map(([id, s]) => new faceapi.LabeledFaceDescriptors(id, s));
   return labeled.length ? new faceapi.FaceMatcher(labeled, threshold) : null;
 }
 let audioCtx = null;
@@ -327,52 +362,84 @@ function beep(){
   }catch(e){}
 }
 
-/* ============ الطلبة ============ */
+/* =====================================================================
+   الطلبة والبصمات (لكل قسم)
+   ===================================================================== */
+function deptStudents(){
+  const out = [];
+  Object.values(App.packs).forEach(p => Object.entries(p.students || {}).forEach(([sid, s]) =>
+    out.push({id:sid, name:s.n, section:s.s, stage:p.stage, shift:p.shift, prints:s.p || [], packId:p.id})));
+  return out.sort((a, b) => a.id.localeCompare(b.id, 'en', {numeric:true}));
+}
+function addStudents(rows){
+  const d = App.dept; if (!d) return {added:0, dup:0, bad:0};
+  const exist = new Set(deptStudents().map(s => s.id)), groups = {}; let added = 0, dup = 0, bad = 0;
+  rows.forEach(r => {
+    const id = cleanId(r.id), name = String(r.name || '').trim();
+    const stage = r.stage || d.stages[0], shift = r.shift || d.shifts[0], section = r.section || (d.sections || [])[0] || '';
+    if (!id || !name){ return; }
+    if (!d.stages.includes(stage) || !d.shifts.includes(shift) || ((d.sections || []).length && !d.sections.includes(section))){ bad++; return; }
+    if (exist.has(id)){ dup++; return; } exist.add(id);
+    const pid = packId(d.id, stage, shift);
+    (groups[pid] = groups[pid] || {stage, shift, students:{}}).students[id] = {n:name, s:section};
+    added++;
+  });
+  Object.entries(groups).forEach(([pid, g]) => bg(DB.set('att_packs', pid,
+    {collegeId:d.collegeId, deptId:d.id, stage:g.stage, shift:g.shift, updatedAt:nowISO(), students:g.students}, true).p));
+  return {added, dup, bad};
+}
 $('#addStudentBtn').onclick = () => {
-  const s = {id:$('#sId').value, name:$('#sName').value.trim(), stage:$('#sStage').value, shift:$('#sShift').value, section:$('#sSection').value};
-  if (!cleanId(s.id) || !s.name) return toast('أدخل الرقم الجامعي والاسم', 'err');
-  const r = Store.addStudents([s]);
-  toast(r.added ? 'تمت الإضافة' : 'الرقم الجامعي موجود مسبقاً', r.added ? 'ok' : 'err');
-  if (r.added){ $('#sId').value = ''; $('#sName').value = ''; $('#sId').focus(); }
+  if (!App.dept) return toast('اختر القسم أولاً', 'err');
+  const r = addStudents([{id:$('#sId').value, name:$('#sName').value, stage:$('#sStage').value, shift:$('#sShift').value, section:$('#sSection').value}]);
+  if (r.added){ toast('تمت الإضافة', 'ok'); $('#sId').value = ''; $('#sName').value = ''; $('#sId').focus(); }
+  else toast(r.dup ? 'الرقم الجامعي موجود مسبقاً في القسم' : 'أدخل الرقم الجامعي والاسم', 'err');
 };
 $('#toggleBulk').onclick = () => $('#bulkBox').classList.toggle('hidden');
 $('#bulkAddBtn').onclick = () => {
+  if (!App.dept) return toast('اختر القسم أولاً', 'err');
   const rows = $('#bulkText').value.split(/\r?\n/).map(l => l.split(/\t|,|،/).map(x => x.trim())).filter(r => r.length >= 2 && r[0]);
-  const r = Store.addStudents(rows.map(x => ({id:x[0], name:x[1], stage:x[2], shift:x[3], section:x[4]})));
-  toast(`تمت إضافة ${r.added} طالب` + (r.dup ? ` — ${r.dup} مكرر لم يُضف` : ''), r.added ? 'ok' : 'err');
-  if (r.added) $('#bulkText').value = '';
+  const r = addStudents(rows.map(x => ({id:x[0], name:x[1], stage:x[2], shift:x[3], section:x[4]})));
+  toast(`تمت إضافة ${r.added} طالب` + (r.dup ? ` — ${r.dup} مكرر` : '') + (r.bad ? ` — ${r.bad} بقيم مرحلة/دراسة/شعبة غير صحيحة` : ''), r.added ? 'ok' : 'err');
+  if (r.added && !r.bad) $('#bulkText').value = '';
 };
 ['#fStage','#fShift','#fPrint','#fSearch'].forEach(s => $(s).oninput = renderStudents);
 function renderStudents(){
-  if (!can('admin','registrar')) return;
+  if (!canManageStudents()) return;
+  const all = deptStudents();
   const st = $('#fStage').value, sh = $('#fShift').value, fp = $('#fPrint').value, q = $('#fSearch').value.trim();
-  const has = id => !!(Store.prints[id] && Store.prints[id].samples.length);
-  const list = Store.students.filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
-    (!fp || (fp === 'yes') === has(s.id)) && (!q || s.name.includes(q) || s.id.includes(q)));
-  const enrolledN = Store.students.filter(s => has(s.id)).length;
-  $('#studCount').textContent = `${Store.students.length} طالب — ${enrolledN} لديهم بصمة`;
-  $('#studentsBody').innerHTML = list.slice(0, 600).map(s => {
-    const n = has(s.id) ? Store.prints[s.id].samples.length : 0;
+  const list = all.filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
+    (!fp || (fp === 'yes') === (s.prints.length > 0)) && (!q || s.name.includes(q) || s.id.includes(q)));
+  $('#studCount').textContent = `${all.length} طالب — ${all.filter(s => s.prints.length).length} لديهم بصمة`;
+  $('#studentsBody').innerHTML = list.slice(0, 800).map(s => {
+    const n = s.prints.length, key = esc(s.packId + '|' + s.id);
     return `<tr><td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.stage)}</td><td>${esc(s.shift)}</td><td>${esc(s.section)}</td>
     <td>${n ? `<span class="badge b-face">مسجّلة (${n})</span>` : '<span class="badge b-abs">غير مسجّلة</span>'}</td>
-    <td class="row"><button class="btn sm" data-enroll="${esc(s.id)}">${n ? 'إعادة التسجيل' : 'تسجيل البصمة'}</button>
-    ${n ? `<button class="btn sm light" data-clear="${esc(s.id)}">حذف البصمة</button>` : ''}
-    <button class="btn sm red" data-del="${esc(s.id)}">حذف</button></td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="note">لا يوجد طلبة</td></tr>';
+    <td class="row"><button class="btn sm" data-enroll="${key}">${n ? 'إعادة التسجيل' : 'تسجيل البصمة'}</button>
+    ${n ? `<button class="btn sm light" data-clear="${key}">حذف البصمة</button>` : ''}
+    <button class="btn sm red" data-del="${key}">حذف</button></td></tr>`;
+  }).join('') || `<tr><td colspan="7" class="note">${App.dept ? 'لا يوجد طلبة' : 'اختر القسم'}</td></tr>`;
 }
+const findStudent = key => { const [pid, sid] = key.split('|'); return deptStudents().find(s => s.packId === pid && s.id === sid); };
 $('#studentsBody').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.enroll) openEnroll(b.dataset.enroll);
-  if (b.dataset.clear && await confirmBox('حذف البصمة', 'سيتم حذف بصمة وجه هذا الطالب نهائياً.', 'حذف')) Store.clearPrint(b.dataset.clear);
-  if (b.dataset.del && await confirmBox('حذف الطالب', 'سيتم حذف الطالب وبصمته. سجلات الحضور السابقة تبقى كما هي.', 'حذف')) Store.deleteStudent(b.dataset.del);
+  if (b.dataset.enroll) return openEnroll(findStudent(b.dataset.enroll));
+  if (b.dataset.clear && await confirmBox('حذف البصمة', 'سيتم حذف بصمة وجه هذا الطالب نهائياً.', 'حذف')){
+    const s = findStudent(b.dataset.clear);
+    bg(DB.update('att_packs', s.packId, {[`students.${s.id}.p`]:DEL, [`students.${s.id}.c`]:DEL, updatedAt:nowISO()}).p);
+  }
+  if (b.dataset.del && await confirmBox('حذف الطالب', 'سيتم حذف الطالب وبصمته. سجلات الحضور السابقة تبقى كما هي.', 'حذف')){
+    const s = findStudent(b.dataset.del);
+    bg(DB.update('att_packs', s.packId, {[`students.${s.id}`]:DEL, updatedAt:nowISO()}).p);
+  }
 };
 
 /* ============ تسجيل البصمة ============ */
 let enroll = null, enrollLoop = false;
-async function openEnroll(id){
+async function openEnroll(s){
+  if (!s) return;
   if (!modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه', 'err');
-  const s = Store.student(id); enroll = {id, samples:[]};
-  $('#enrollTitle').textContent = 'تسجيل بصمة: ' + s.name + ' (' + s.id + ')';
+  enroll = {s, samples:[]};
+  $('#enrollTitle').textContent = `تسجيل بصمة: ${s.name} (${s.id}) — ${s.stage} / ${s.shift}`;
   $('#thumbs').innerHTML = ''; $('#consentChk').checked = false; updateEnrollUI();
   $('#enrollModal').classList.add('show');
   try{ await startCamera($('#eVideo')); enrollLoop = true; enrollPreview(); }
@@ -399,6 +466,7 @@ function updateEnrollUI(){
 }
 $('#consentChk').onchange = updateEnrollUI;
 function addSample(desc, thumb){
+  if (enroll.samples.length >= 6) return toast('يكفي ٦ صور كحد أقصى', 'err');
   enroll.samples.push(desc);
   if (thumb){ const img = document.createElement('img'); img.src = thumb; $('#thumbs').appendChild(img); }
   updateEnrollUI();
@@ -425,49 +493,58 @@ $('#enrollFiles').onchange = async e => {
 function closeEnroll(){ enrollLoop = false; stopCamera($('#eVideo')); $('#enrollModal').classList.remove('show'); enroll = null; }
 $('#enrollCancel').onclick = closeEnroll;
 $('#enrollSave').onclick = async () => {
-  const sm = enroll.samples; let maxD = 0;
-  for (let i = 0; i < sm.length; i++) for (let j = i+1; j < sm.length; j++) maxD = Math.max(maxD, faceapi.euclideanDistance(sm[i], sm[j]));
+  const sm = enroll.samples, s = enroll.s; let maxD = 0;
+  for (let i = 0; i < sm.length; i++) for (let j = i + 1; j < sm.length; j++) maxD = Math.max(maxD, faceapi.euclideanDistance(sm[i], sm[j]));
   if (maxD > 0.6 && !(await confirmBox('تحذير', 'الصور الملتقطة متباينة كثيراً وقد لا تكون لنفس الشخص. هل تريد الحفظ رغم ذلك؟', 'حفظ'))) return;
-  const others = {}; Object.entries(Store.prints).forEach(([id, p]) => { if (id !== enroll.id) others[id] = p.samples; });
+  // فحص التكرار داخل القسم
+  const others = {}; deptStudents().forEach(o => { if (o.id !== s.id && o.prints.length) others[o.id] = o.prints.map(decDesc); });
   const m = buildMatcher(others, Settings.get().threshold);
   if (m){
     const best = m.findBestMatch(sm[0]);
-    if (best.label !== 'unknown' && !(await confirmBox('وجه مشابه!', `هذا الوجه يشبه الطالب المسجّل: ${Store.nameOf(best.label)} (${best.label}). قد يكون تلاعباً أو تشابهاً (توأم). هل تريد الحفظ؟`, 'حفظ'))) return;
+    if (best.label !== 'unknown'){
+      const o = deptStudents().find(x => x.id === best.label);
+      if (!(await confirmBox('وجه مشابه!', `هذا الوجه يشبه الطالب المسجّل: ${o ? o.name : ''} (${best.label}). قد يكون تلاعباً أو تشابهاً (توأم). هل تريد الحفظ؟`, 'حفظ'))) return;
+    }
   }
-  const name = Store.nameOf(enroll.id);
-  Store.savePrint(enroll.id, sm.map(descToArr));
-  toast('تم حفظ البصمة: ' + name, 'ok'); closeEnroll();
+  bg(DB.update('att_packs', s.packId, {[`students.${s.id}.p`]:sm.map(encDesc), [`students.${s.id}.c`]:nowISO(), updatedAt:nowISO()}).p);
+  toast('تم حفظ البصمة: ' + s.name, 'ok'); closeEnroll();
 };
 
-/* ============ أخذ الحضور ============ */
+/* =====================================================================
+   أخذ الحضور
+   ===================================================================== */
 let sess = null, matcher = null, loopOn = false, track = {id:null};
 $('#cDate').value = today();
 function renderCourseList(){
-  const set = new Set(Store.sessions.map(s => s.course));
+  const set = new Set(App.sessions.filter(s => !App.dept || s.deptId === App.dept.id).map(s => s.course));
   $('#courseList').innerHTML = [...set].map(c => `<option value="${esc(c)}">`).join('');
 }
 $('#startSessionBtn').onclick = async () => {
+  const d = App.dept;
+  if (!d) return toast('اختر القسم أولاً', 'err');
   if (!modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه', 'err');
-  const meta = {course:$('#cName').value.trim(), stage:$('#cStage').value, shift:$('#cShift').value, section:$('#cSection').value,
+  const meta = {collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term,
+    course:$('#cName').value.trim(), stage:$('#cStage').value, shift:$('#cShift').value, section:$('#cSection').value,
     type:$('#cType').value, hours:+$('#cHours').value || 1, date:$('#cDate').value || today(),
-    instructorUid:Store.user.uid, instructorName:Store.user.name || Store.user.email || ''};
+    instructorUid:App.user.uid, instructorName:App.user.name || App.user.email || ''};
   if (!meta.course) return toast('أدخل اسم المادة', 'err');
   $('#startSessionBtn').disabled = true;
-  let data;
-  try{ data = await Store.loadRoster(meta.stage, meta.shift); }
+  let pack = null;
+  try{ pack = await DB.get('att_packs', packId(d.id, meta.stage, meta.shift)); }
   catch(e){ $('#startSessionBtn').disabled = false; return toast('تعذّر تحميل قائمة الطلبة: ' + fbErr(e), 'err'); }
   $('#startSessionBtn').disabled = false;
-  const roster = data.students.filter(s => !meta.section || s.section === meta.section)
-    .sort((a,b) => a.name.localeCompare(b.name, 'ar'));
+  const studs = Object.entries((pack && pack.students) || {}).map(([id, s]) => ({id, name:s.n, section:s.s, prints:s.p || []}));
+  const roster = studs.filter(s => !meta.section || s.section === meta.section).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   if (!roster.length) return toast('لا يوجد طلبة بهذه المرحلة/الدراسة/الشعبة (أو لم تُحمَّل بعد — افتحها مرة مع إنترنت)', 'err');
-  matcher = buildMatcher(data.prints, Settings.get().threshold);
-  const noPrint = roster.filter(s => !data.prints[s.id]).length;
+  const prints = {}; studs.forEach(s => { if (s.prints.length) prints[s.id] = s.prints.map(decDesc); });
+  matcher = buildMatcher(prints, Settings.get().threshold);
+  const noPrint = roster.filter(s => !prints[s.id]).length;
   if (!matcher) toast('لا توجد بصمات مسجّلة لهذه المرحلة — سجّل الحضور يدوياً', 'err');
   else if (noPrint) toast(`${noPrint} طالب بدون بصمة — سجّلهم يدوياً`, 'err');
-  sess = {meta, names:Object.fromEntries(data.students.map(s => [s.id, s.name])), hasPrint:data.prints,
+  sess = {meta, names:Object.fromEntries(studs.map(s => [s.id, s.name])), hasPrint:prints,
           roster:new Map(roster.map(s => [s.id, {status:'absent', time:'', dist:null}]))};
   $('#sessionSetup').classList.add('hidden'); $('#sessionLive').classList.remove('hidden');
-  $('#liveTitle').textContent = `${meta.course} — المرحلة ${meta.stage} / ${meta.shift}${meta.section ? ' / شعبة ' + meta.section : ''} — ${meta.type} (${meta.hours} ساعة) — ${meta.date}`;
+  $('#liveTitle').textContent = `${meta.course} — ${d.name} — ${meta.stage} / ${meta.shift}${meta.section ? ' / شعبة ' + meta.section : ''} — ${meta.type} (${meta.hours} ساعة) — ${meta.date}`;
   $('#rosterSearch').value = ''; renderRoster();
   if (matcher) await resumeCamera(); else showPrompt('لا توجد بصمات — التسجيل يدوي', 'warn');
 };
@@ -496,7 +573,7 @@ function handleFaces(faces){
     if (m.label !== track.id) track = {id:m.label, frames:0, phase:0, start:now, last:now};
     track.frames++; track.last = now; id = m.label;
   } else if (track.id && track.phase > 0 && now - track.last < 2000){
-    id = track.id; // أثناء حركة الرأس قد تنخفض الثقة مؤقتاً
+    id = track.id;
   } else {
     track = {id:null}; drawBoxes(c, v, faces, '#e74c3c');
     return showPrompt('وجه غير معروف — راجع التدريسي', 'err');
@@ -535,7 +612,7 @@ function renderRoster(){
   sess.roster.forEach(st => { if (st.status !== 'absent') present++; });
   const rows = [...sess.roster.entries()]
     .filter(([id]) => !q || (sess.names[id] || '').includes(q) || id.includes(q))
-    .sort((a,b) => (a[1].status === 'absent') - (b[1].status === 'absent'));
+    .sort((a, b) => (a[1].status === 'absent') - (b[1].status === 'absent'));
   $('#rosterBody').innerHTML = rows.map(([id, st]) => {
     const badge = st.status === 'face' ? '<span class="badge b-face">حاضر (وجه)</span>' : st.status === 'manual' ? '<span class="badge b-man">حاضر (يدوي)</span>' : '<span class="badge b-abs">غائب</span>';
     const btn = st.status === 'absent' ? `<button class="btn sm light" data-man="${esc(id)}">حاضر يدوياً</button>` : `<button class="btn sm light" data-undo="${esc(id)}">إلغاء</button>`;
@@ -558,30 +635,40 @@ $('#cancelSessionBtn').onclick = async () => {
 $('#finishBtn').onclick = async () => {
   const absent = [...sess.roster.values()].filter(s => s.status === 'absent').length;
   if (!(await confirmBox('إنهاء المحاضرة', `سيُحفظ الحضور: ${sess.roster.size - absent} حاضر و${absent} غائب.`, 'حفظ'))) return;
-  const entries = [...sess.roster.entries()];
-  const names = {}; entries.forEach(([id]) => names[id] = sess.names[id] || id);
+  const entries = [...sess.roster.entries()], names = {};
+  entries.forEach(([id]) => names[id] = sess.names[id] || id);
   const rec = Object.assign({}, sess.meta, {
-    absentees: entries.filter(([,s]) => s.status === 'absent').map(([id]) => id),
-    present: entries.filter(([,s]) => s.status !== 'absent').map(([id, s]) => ({id, method:s.status, time:s.time, dist:s.dist == null ? null : +s.dist.toFixed(3)})),
-    names, createdAt:new Date().toISOString(), appVersion:APP_VERSION
+    absentees: entries.filter(([, s]) => s.status === 'absent').map(([id]) => id),
+    present: entries.filter(([, s]) => s.status !== 'absent').map(([id, s]) => ({id, method:s.status, time:s.time, dist:s.dist == null ? null : +s.dist.toFixed(3)})),
+    names, createdAt:nowISO(), appVersion:APP_VERSION
   });
-  Store.saveSession(rec); endSessionUI();
+  const w = DB.set('att_sessions', null, rec);
+  if (App.mode === 'local') toast('تم حفظ حضور المحاضرة', 'ok');
+  else {
+    bg(w.p, 'تم رفع حضور المحاضرة إلى الخادم ✓');
+    if (!navigator.onLine) toast('لا يوجد إنترنت: حُفظ الحضور على الجهاز وسيُرفع تلقائياً عند عودة الاتصال', 'ok');
+  }
+  endSessionUI();
 };
 window.addEventListener('beforeunload', e => { if (sess){ e.preventDefault(); e.returnValue = ''; } });
 
-/* ============ السجلات والتقارير ============ */
-const courseKey = s => `${s.course} | ${s.stage} | ${s.shift}`;
+/* =====================================================================
+   السجلات والتقارير
+   ===================================================================== */
+const courseKey = s => `${s.course} | ${s.stage} | ${s.shift}` + (is('instructor') ? ` | ${s.deptName || deptName(s.deptId)}` : '');
 function renderRecords(){
-  if (!can('admin','instructor')) return;
-  const list = Store.sessions.slice().sort((a,b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
-  const isAdmin = can('admin');
-  $('#sessionsBody').innerHTML = list.map(s => `<tr><td>${esc(s.date)}</td><td>${esc(s.course)}</td>
+  if (!is('super','dean','head','instructor')) return;
+  const T = App.org ? App.org.term : '';
+  $('#recTitle').textContent = is('instructor') ? `محاضراتي — ${T}` : `محاضرات قسم ${App.dept ? App.dept.name : '—'} — ${T}`;
+  const list = App.sessions.slice().sort((a, b) => (b.date + b.createdAt).localeCompare(a.date + a.createdAt));
+  const canDel = is('super','dean','head');
+  $('#sessionsBody').innerHTML = list.map(s => `<tr><td>${esc(s.date)}</td><td>${esc(s.deptName || deptName(s.deptId))}</td><td>${esc(s.course)}</td>
     <td>${esc(s.stage)} / ${esc(s.shift)} / ${esc(s.section || 'الكل')}</td><td>${esc(s.type)}</td><td>${s.hours}</td><td>${esc(s.instructorName || '')}</td>
     <td>${(s.present || []).length}</td><td>${(s.absentees || []).length}</td>
-    <td>${Store.mode === 'local' ? '<span class="badge b-gray">محلي</span>' : s._pending ? '<span class="badge b-man">بانتظار الرفع</span>' : '<span class="badge b-face">مرفوع ✓</span>'}</td>
-    <td class="row"><button class="btn sm light" data-csv="${esc(s.id)}">CSV</button>${isAdmin ? `<button class="btn sm red" data-sdel="${esc(s.id)}">حذف</button>` : ''}</td></tr>`).join('')
-    || '<tr><td colspan="10" class="note">لا توجد محاضرات محفوظة</td></tr>';
-  const keys = [...new Set(Store.sessions.map(courseKey))].sort();
+    <td>${App.mode === 'local' ? '<span class="badge b-gray">محلي</span>' : s._pending ? '<span class="badge b-man">بانتظار الرفع</span>' : '<span class="badge b-face">مرفوع ✓</span>'}</td>
+    <td class="row"><button class="btn sm light" data-csv="${esc(s.id)}">CSV</button>${canDel ? `<button class="btn sm red" data-sdel="${esc(s.id)}">حذف</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="11" class="note">لا توجد محاضرات محفوظة في هذا الفصل</td></tr>';
+  const keys = [...new Set(App.sessions.map(courseKey))].sort();
   const cur = $('#sumCourse').value;
   $('#sumCourse').innerHTML = keys.map(k => `<option ${k === cur ? 'selected' : ''}>${esc(k)}</option>`).join('') || '<option value="">لا توجد مواد</option>';
   renderSummary();
@@ -589,26 +676,33 @@ function renderRecords(){
 $('#sessionsBody').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.csv){
-    const s = Store.sessions.find(x => x.id === b.dataset.csv);
-    const nm = id => (s.names && s.names[id]) || Store.nameOf(id);
-    const rows = [['المادة', s.course, 'التاريخ', s.date, 'الساعات', s.hours], ['الرقم','الاسم','الحالة','طريقة التسجيل','الوقت']];
+    const s = App.sessions.find(x => x.id === b.dataset.csv);
+    const nm = id => (s.names && s.names[id]) || id;
+    const rows = [['القسم', s.deptName || deptName(s.deptId), 'المادة', s.course, 'التاريخ', s.date, 'الساعات', s.hours],
+                  ['الرقم','الاسم','الحالة','طريقة التسجيل','الوقت']];
     (s.present || []).forEach(p => rows.push([p.id, nm(p.id), 'حاضر', p.method === 'face' ? 'بصمة وجه' : 'يدوي', p.time]));
     (s.absentees || []).forEach(id => rows.push([id, nm(id), 'غائب', '', '']));
     download(`حضور_${s.course}_${s.date}.csv`, toCSV(rows), 'text/csv');
   }
-  if (b.dataset.sdel && await confirmBox('حذف المحاضرة', 'سيُحذف سجل حضور هذه المحاضرة نهائياً.', 'حذف')) Store.deleteSession(b.dataset.sdel);
+  if (b.dataset.sdel && await confirmBox('حذف المحاضرة', 'سيُحذف سجل حضور هذه المحاضرة نهائياً.', 'حذف')) bg(DB.del('att_sessions', b.dataset.sdel).p);
 };
+function absenceTable(sessions){ // {key: {held, abs:{id:h}, names}}
+  const out = {};
+  sessions.forEach(s => {
+    const k = (s.deptId || '') + '|' + s.course + '|' + s.stage + '|' + s.shift;
+    const o = out[k] = out[k] || {held:0, abs:{}, names:{}, deptId:s.deptId};
+    o.held += +s.hours || 0; Object.assign(o.names, s.names || {});
+    (s.absentees || []).forEach(id => o.abs[id] = (o.abs[id] || 0) + (+s.hours || 0));
+    (s.present || []).forEach(p => o.abs[p.id] = o.abs[p.id] || 0);
+  });
+  return out;
+}
 function summaryRows(){
   const key = $('#sumCourse').value; if (!key) return [];
-  const ss = Store.sessions.filter(s => courseKey(s) === key);
-  const held = ss.reduce((a, s) => a + (+s.hours || 0), 0), abs = {}, names = {};
-  ss.forEach(s => {
-    Object.assign(names, s.names || {});
-    (s.absentees || []).forEach(id => abs[id] = (abs[id] || 0) + (+s.hours || 0));
-    (s.present || []).forEach(p => abs[p.id] = abs[p.id] || 0);
-  });
-  return Object.entries(abs).map(([id, h]) => ({id, name:names[id] || Store.nameOf(id), h, held, pct: held ? h/held*100 : 0}))
-    .sort((a,b) => b.pct - a.pct || a.name.localeCompare(b.name, 'ar'));
+  const ss = App.sessions.filter(s => courseKey(s) === key);
+  const t = Object.values(absenceTable(ss))[0]; if (!t) return [];
+  return Object.entries(t.abs).map(([id, h]) => ({id, name:t.names[id] || id, h, held:t.held, pct:t.held ? h / t.held * 100 : 0}))
+    .sort((a, b) => b.pct - a.pct || a.name.localeCompare(b.name, 'ar'));
 }
 $('#sumCourse').onchange = renderSummary;
 function renderSummary(){
@@ -623,26 +717,205 @@ $('#sumExportBtn').onclick = () => {
     ...rows.map(r => [r.id, r.name, r.h, r.held, r.pct.toFixed(1)])]), 'text/csv');
 };
 
-/* ============ المستخدمون ============ */
-function renderUsers(){
-  if (!can('admin') || Store.mode === 'local') return;
-  $('#usersBody').innerHTML = Store.users.slice().sort((a,b) => (a.name || '').localeCompare(b.name || '', 'ar')).map(u => `<tr>
-    <td>${esc(u.name)}</td><td dir="ltr" style="text-align:right">${esc(u.email)}</td>
-    <td>${u.uid === Store.user.uid ? `<span class="badge b-face">${ROLES[u.role]} (أنت)</span>` :
-      `<select data-role="${esc(u.uid)}" style="width:auto">${Object.entries(ROLES).map(([k, v]) => `<option value="${k}" ${k === u.role ? 'selected' : ''}>${v}</option>`).join('')}</select>`}</td></tr>`).join('');
+/* ---- تقرير الكليات والأقسام (مدير النظام والعميد) ---- */
+let ovRows = [];
+function renderOverviewOptions(){
+  if (!is('super','dean')) return;
+  const cur = $('#ovCollege').value;
+  const cols = is('super') ? Object.entries(App.org.colleges || {}) : [[App.user.collegeId, {name:collegeName(App.user.collegeId)}]];
+  $('#ovCollege').innerHTML = (is('super') ? '<option value="*">كل الجامعة</option>' : '') + cols.map(([id, c]) => `<option value="${esc(id)}">${esc(c.name)}</option>`).join('');
+  if (cur && [...$('#ovCollege').options].some(o => o.value === cur)) $('#ovCollege').value = cur;
 }
-$('#usersBody').onchange = e => { const s = e.target.closest('select[data-role]'); if (s) Store.setRole(s.dataset.role, s.value); };
-$('#addUserBtn').onclick = async () => {
-  const u = {name:$('#uName').value.trim(), email:$('#uEmail').value.trim(), password:$('#uPass').value, role:$('#uRole').value};
-  if (!u.name || !u.email || u.password.length < 6) return toast('أكمل الاسم والبريد وكلمة مرور من ٦ أحرف على الأقل', 'err');
-  if (!navigator.onLine) return toast('إنشاء الحسابات يتطلب اتصالاً بالإنترنت', 'err');
-  $('#addUserBtn').disabled = true;
-  try{ await Store.addUser(u); toast('تم إنشاء حساب ' + u.name, 'ok'); $('#uName').value = $('#uEmail').value = $('#uPass').value = ''; }
-  catch(e){ toast('تعذّر إنشاء الحساب: ' + fbErr(e), 'err'); }
-  $('#addUserBtn').disabled = false;
+$('#ovLoadBtn').onclick = async () => {
+  const c = $('#ovCollege').value, T = App.org.term;
+  const f = c === '*' ? [['term', T]] : [['collegeId', c], ['term', T]];
+  $('#ovLoadBtn').disabled = true; $('#ovBody').innerHTML = '<tr><td colspan="7" class="note">جارٍ التحميل...</td></tr>';
+  try{
+    const list = await DB.query('att_sessions', f), per = {};
+    list.forEach(s => {
+      const o = per[s.deptId] = per[s.deptId] || {collegeId:s.collegeId, deptId:s.deptId, name:s.deptName || deptName(s.deptId), lec:0, hours:0, P:0, A:0, face:0, sessions:[]};
+      o.lec++; o.hours += +s.hours || 0; o.P += (s.present || []).length; o.A += (s.absentees || []).length;
+      o.face += (s.present || []).filter(p => p.method === 'face').length; o.sessions.push(s);
+    });
+    ovRows = Object.values(per).map(o => {
+      const over = new Set();
+      Object.values(absenceTable(o.sessions)).forEach(t => Object.entries(t.abs).forEach(([id, h]) => { if (t.held && h / t.held > 0.10) over.add(id); }));
+      return {college:collegeName(o.collegeId), dept:o.name, lec:o.lec, hours:o.hours,
+        rate:(o.P + o.A) ? o.P / (o.P + o.A) * 100 : 0, faceRate:o.P ? o.face / o.P * 100 : 0, over:over.size};
+    }).sort((a, b) => a.college.localeCompare(b.college, 'ar') || a.dept.localeCompare(b.dept, 'ar'));
+    $('#ovBody').innerHTML = ovRows.map(r => `<tr><td>${esc(r.college)}</td><td>${esc(r.dept)}</td><td>${r.lec}</td><td>${r.hours}</td>
+      <td><span class="badge ${r.rate >= 90 ? 'b-face' : r.rate >= 80 ? 'b-man' : 'b-abs'}">${r.rate.toFixed(1)}%</span></td><td>${r.faceRate.toFixed(0)}%</td>
+      <td>${r.over ? `<span class="badge b-abs">${r.over}</span>` : '0'}</td></tr>`).join('') || '<tr><td colspan="7" class="note">لا توجد محاضرات في هذا الفصل</td></tr>';
+  }catch(e){ $('#ovBody').innerHTML = `<tr><td colspan="7" class="note">تعذّر التحميل: ${esc(fbErr(e))}</td></tr>`; }
+  $('#ovLoadBtn').disabled = false;
+};
+$('#ovExportBtn').onclick = () => {
+  if (!ovRows.length) return toast('اعرض التقرير أولاً', 'err');
+  download(`تقرير_الحضور_${App.org.term}.csv`.replace(/[\/\s]+/g, '_'), toCSV([['الكلية','القسم','المحاضرات','الساعات','نسبة الحضور %','تسجيل بالوجه %','طلبة تجاوزوا 10%'],
+    ...ovRows.map(r => [r.college, r.dept, r.lec, r.hours, r.rate.toFixed(1), r.faceRate.toFixed(0), r.over])]), 'text/csv');
 };
 
-/* ============ الإعدادات ============ */
+/* =====================================================================
+   المستخدمون
+   ===================================================================== */
+function roleOptionsFor(editing){
+  if (is('super')) return ['super','dean','head','registrar','instructor'].concat(editing ? ['disabled'] : []);
+  if (is('dean')) return ['head','registrar','instructor'].concat(editing ? ['disabled'] : []);
+  if (is('head')) return ['registrar','instructor'].concat(editing ? ['disabled'] : []);
+  return [];
+}
+function canEditUser(u){
+  const me = App.user; if (u.id === me.uid) return false;
+  if (is('super')) return true;
+  if (is('dean')) return u.collegeId === me.collegeId && ['head','registrar','instructor','disabled'].includes(u.role);
+  if (is('head')) return u.collegeId === me.collegeId && ['registrar','instructor','disabled'].includes(u.role) &&
+    (u.deptIds || []).every(d => (me.deptIds || []).includes(d));
+  return false;
+}
+$('#uSearch').oninput = renderUsers;
+function renderUsers(){
+  if (!is('super','dean','head')) return;
+  const q = $('#uSearch').value.trim(), me = App.user;
+  let list = App.users.slice();
+  if (is('head')) list = list.filter(u => u.id === me.uid || (u.deptIds || []).some(d => (me.deptIds || []).includes(d)));
+  list = list.filter(u => !q || (u.name || '').includes(q) || (u.email || '').includes(q))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+  $('#usersBody').innerHTML = list.map(u => `<tr><td>${esc(u.name)}${u.id === me.uid ? ' <span class="badge b-gray">أنت</span>' : ''}</td>
+    <td dir="ltr" style="text-align:right">${esc(u.email)}</td>
+    <td><span class="badge ${u.role === 'disabled' ? 'b-abs' : 'b-face'}">${ROLES[normRole(u.role)] || u.role}</span></td>
+    <td>${esc(collegeName(u.collegeId))}</td><td>${(u.deptIds || []).map(d => esc(deptName(d))).join('، ')}</td>
+    <td>${canEditUser(u) ? `<button class="btn sm light" data-edit="${esc(u.id)}">تعديل</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="note">لا يوجد مستخدمون</td></tr>';
+}
+let umEditing = null;
+function openUserModal(u){
+  umEditing = u || null;
+  const me = App.user;
+  $('#userModalTitle').textContent = u ? 'تعديل مستخدم: ' + u.name : 'إضافة مستخدم';
+  $('#umName').value = u ? u.name : ''; $('#umEmail').value = u ? u.email : ''; $('#umPass').value = '';
+  $('#umName').disabled = $('#umEmail').disabled = !!u; $('#umPassBox').classList.toggle('hidden', !!u);
+  $('#umRole').innerHTML = roleOptionsFor(!!u).map(r => `<option value="${r}">${ROLES[r]}</option>`).join('');
+  $('#umRole').value = u ? normRole(u.role) : 'instructor';
+  const cols = is('super') ? Object.entries(App.org.colleges || {}) : [[me.collegeId, {name:collegeName(me.collegeId)}]];
+  $('#umCollege').innerHTML = cols.map(([id, c]) => `<option value="${esc(id)}">${esc(c.name)}</option>`).join('');
+  $('#umCollege').value = u ? (u.collegeId || '') : (App.dept ? App.dept.collegeId : me.collegeId);
+  $('#umCollege').disabled = !is('super');
+  let depts = is('super') ? deptList() : is('dean') ? deptList().filter(d => d.collegeId === me.collegeId) : deptList().filter(d => (me.deptIds || []).includes(d.id));
+  const sel = new Set(u ? (u.deptIds || []) : (App.dept ? [App.dept.id] : []));
+  const byCol = {}; depts.forEach(d => (byCol[d.collegeId] = byCol[d.collegeId] || []).push(d));
+  $('#umDepts').innerHTML = Object.entries(byCol).map(([c, ds]) => `<div class="grp">${esc(collegeName(c))}</div>` +
+    ds.map(d => `<label><input type="checkbox" value="${esc(d.id)}" ${sel.has(d.id) ? 'checked' : ''}>${esc(d.name)}</label>`).join('')).join('')
+    || '<span class="note">لا توجد أقسام</span>';
+  $('#umNote').textContent = App.mode === 'local' ? 'وضع محلي: يُنشأ سجل المستخدم فقط دون حساب دخول.' : (u ? '' : 'يتطلب إنشاء الحساب اتصالاً بالإنترنت.');
+  $('#userModal').classList.add('show');
+}
+$('#newUserBtn').onclick = () => openUserModal(null);
+$('#usersBody').onclick = e => { const b = e.target.closest('button[data-edit]'); if (b) openUserModal(App.users.find(u => u.id === b.dataset.edit)); };
+$('#umCancel').onclick = () => $('#userModal').classList.remove('show');
+$('#umSave').onclick = async () => {
+  const r = $('#umRole').value, collegeId = $('#umCollege').value;
+  const deptIds = $$('#umDepts input:checked').map(x => x.value);
+  if (['head','registrar','instructor'].includes(r) && !deptIds.length) return toast('اختر قسماً واحداً على الأقل', 'err');
+  if (r !== 'super' && !collegeId) return toast('اختر الكلية', 'err');
+  $('#umSave').disabled = true;
+  try{
+    if (umEditing){
+      await DB.update('att_users', umEditing.id, {role:r, collegeId, deptIds, updatedAt:nowISO()}).p;
+      toast('تم التحديث', 'ok');
+    } else {
+      const name = $('#umName').value.trim(), email = $('#umEmail').value.trim(), pass = $('#umPass').value;
+      if (!name || !email || pass.length < 6) throw {message:'أكمل الاسم والبريد وكلمة مرور من ٦ أحرف على الأقل'};
+      let uid;
+      if (App.mode === 'local') uid = 'U' + Date.now();
+      else {
+        if (!navigator.onLine) throw {message:'إنشاء الحسابات يتطلب اتصالاً بالإنترنت'};
+        const sec = firebase.apps.find(a => a.name === 'secondary') || firebase.initializeApp(window.FIREBASE_CONFIG, 'secondary');
+        const cred = await sec.auth().createUserWithEmailAndPassword(email, pass);
+        uid = cred.user.uid; await sec.auth().signOut();
+      }
+      await DB.set('att_users', uid, {name, email, role:r, collegeId, deptIds, createdAt:nowISO(), createdBy:App.user.uid}).p;
+      toast('تم إنشاء حساب ' + name, 'ok');
+    }
+    $('#userModal').classList.remove('show');
+  }catch(e){ toast('تعذّر الحفظ: ' + fbErr(e), 'err'); }
+  $('#umSave').disabled = false;
+};
+
+/* =====================================================================
+   الهيكل التنظيمي (مدير النظام)
+   ===================================================================== */
+function renderOrg(){
+  if (!is('super') || !App.org) return;
+  const o = App.org;
+  if (document.activeElement !== $('#orgTerm')) $('#orgTerm').value = o.term || '';
+  const depts = deptList();
+  $('#collegesBody').innerHTML = Object.entries(o.colleges || {}).map(([id, c]) => `<tr><td dir="ltr" style="text-align:right">${esc(id)}</td><td>${esc(c.name)}</td>
+    <td>${depts.filter(d => d.collegeId === id).length}</td>
+    <td class="row"><button class="btn sm light" data-cedit="${esc(id)}">تعديل</button><button class="btn sm red" data-cdel="${esc(id)}">حذف</button></td></tr>`).join('');
+  const cur = $('#depCollege').value;
+  $('#depCollege').innerHTML = Object.entries(o.colleges || {}).map(([id, c]) => `<option value="${esc(id)}">${esc(c.name)}</option>`).join('');
+  if (cur) $('#depCollege').value = cur;
+  $('#deptsBody').innerHTML = depts.sort((a, b) => collegeName(a.collegeId).localeCompare(collegeName(b.collegeId), 'ar') || a.name.localeCompare(b.name, 'ar'))
+    .map(d => `<tr><td>${esc(collegeName(d.collegeId))}</td><td dir="ltr" style="text-align:right">${esc(d.id)}</td><td>${esc(d.name)}</td>
+    <td>${esc((d.stages || []).join('، '))}</td><td>${esc((d.shifts || []).join('، '))}</td><td>${esc((d.sections || []).join('، '))}</td>
+    <td class="row"><button class="btn sm light" data-dedit="${esc(d.id)}">تعديل</button><button class="btn sm red" data-ddel="${esc(d.id)}">حذف</button></td></tr>`).join('');
+}
+const saveOrg = (o, msg) => bg(DB.set('att_org', 'main', o).p, msg);
+$('#saveTermBtn').onclick = async () => {
+  const t = $('#orgTerm').value.trim(); if (!t) return toast('اكتب اسم الفصل', 'err');
+  if (t === App.org.term) return;
+  if (!(await confirmBox('تغيير الفصل الدراسي', `ستُنسب المحاضرات الجديدة إلى "${t}"، وستعرض التقارير هذا الفصل فقط. سجلات الفصل السابق تبقى محفوظة.`, 'تغيير'))) return;
+  saveOrg(Object.assign(clone(App.org), {term:t}), 'تم تغيير الفصل الدراسي');
+};
+$('#saveCollegeBtn').onclick = () => {
+  const id = $('#colId').value.trim().toLowerCase(), name = $('#colName').value.trim();
+  if (!slugOk(id)) return toast('الرمز: أحرف إنجليزية صغيرة وأرقام وشرطة فقط (مثل tech-eng)', 'err');
+  if (!name) return toast('اكتب اسم الكلية', 'err');
+  const o = clone(App.org); o.colleges = o.colleges || {}; o.colleges[id] = {name};
+  saveOrg(o, 'تم حفظ الكلية'); $('#colId').value = ''; $('#colName').value = '';
+};
+$('#collegesBody').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.cedit){ $('#colId').value = b.dataset.cedit; $('#colName').value = collegeName(b.dataset.cedit); $('#colName').focus(); }
+  if (b.dataset.cdel){
+    if (deptList().some(d => d.collegeId === b.dataset.cdel)) return toast('احذف أقسام الكلية أو انقلها أولاً', 'err');
+    if (!(await confirmBox('حذف الكلية', 'سيتم حذف الكلية من الهيكل.', 'حذف'))) return;
+    const o = clone(App.org); delete o.colleges[b.dataset.cdel]; saveOrg(o);
+  }
+};
+function clearDeptForm(){
+  $('#depId').value = ''; $('#depId').disabled = false; $('#depName').value = '';
+  $('#depStages').value = 'الأولى,الثانية,الثالثة,الرابعة'; $('#depSections').value = 'A,B';
+  $('#depMorning').checked = $('#depEvening').checked = true;
+}
+$('#clearDeptBtn').onclick = clearDeptForm;
+$('#saveDeptBtn').onclick = () => {
+  const id = $('#depId').value.trim().toLowerCase(), name = $('#depName').value.trim(), collegeId = $('#depCollege').value;
+  const stages = splitList($('#depStages').value), sections = splitList($('#depSections').value);
+  const shifts = [$('#depMorning').checked && 'صباحي', $('#depEvening').checked && 'مسائي'].filter(Boolean);
+  if (!collegeId) return toast('أضف كلية أولاً', 'err');
+  if (!slugOk(id)) return toast('رمز القسم: أحرف إنجليزية صغيرة وأرقام وشرطة فقط (مثل ai-eng)', 'err');
+  if (!name || !stages.length || !shifts.length) return toast('أكمل اسم القسم والمراحل والدراسة', 'err');
+  const o = clone(App.org); o.depts = o.depts || {};
+  o.depts[id] = {name, collegeId, stages, shifts, sections};
+  saveOrg(o, 'تم حفظ القسم'); clearDeptForm();
+};
+$('#deptsBody').onclick = async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.dedit){
+    const d = App.org.depts[b.dataset.dedit];
+    $('#depCollege').value = d.collegeId; $('#depId').value = b.dataset.dedit; $('#depId').disabled = true; $('#depName').value = d.name;
+    $('#depStages').value = (d.stages || []).join(','); $('#depSections').value = (d.sections || []).join(',');
+    $('#depMorning').checked = (d.shifts || []).includes('صباحي'); $('#depEvening').checked = (d.shifts || []).includes('مسائي');
+    $('#depName').focus();
+  }
+  if (b.dataset.ddel){
+    if (!(await confirmBox('حذف القسم', 'سيُحذف القسم من الهيكل فقط؛ بيانات طلبته وسجلاته تبقى محفوظة ويمكن استعادتها بإعادة إنشاء القسم بنفس الرمز.', 'حذف'))) return;
+    const o = clone(App.org); delete o.depts[b.dataset.ddel]; saveOrg(o);
+  }
+};
+
+/* ============ الإعدادات والنسخ الاحتياطي ============ */
 function loadSettingsUI(){
   const s = Settings.get();
   $('#setThreshold').value = s.threshold; $('#thVal').textContent = s.threshold;
@@ -657,32 +930,39 @@ $('#listCamsBtn').onclick = async () => {
   try{
     const tmp = await navigator.mediaDevices.getUserMedia({video:true}); tmp.getTracks().forEach(t => t.stop());
     const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput'), cur = Settings.get().cameraId;
-    $('#setCamera').innerHTML = '<option value="">الافتراضية</option>' + cams.map((c, i) => `<option value="${esc(c.deviceId)}" ${c.deviceId === cur ? 'selected' : ''}>${esc(c.label || 'كاميرا ' + (i+1))}</option>`).join('');
+    $('#setCamera').innerHTML = '<option value="">الافتراضية</option>' + cams.map((c, i) => `<option value="${esc(c.deviceId)}" ${c.deviceId === cur ? 'selected' : ''}>${esc(c.label || 'كاميرا ' + (i + 1))}</option>`).join('');
   }catch(e){ toast('تعذّر الوصول إلى الكاميرات', 'err'); }
 };
-$('#backupBtn').onclick = () => download(`نسخة_الحضور_${today()}.json`, JSON.stringify(Store.exportData()), 'application/json');
+$('#backupBtn').onclick = () => {
+  const d = App.dept; if (!d) return toast('اختر القسم أولاً', 'err');
+  const data = {app:'siraj-attendance', version:APP_VERSION, exportedAt:nowISO(), collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term,
+    packs:Object.values(App.packs).map(strip), sessions:App.sessions.filter(s => s.deptId === d.id).map(strip)};
+  download(`نسخة_${d.id}_${today()}.json`, JSON.stringify(data), 'application/json');
+};
 $('#restoreInput').onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  const d = App.dept; if (!d) return toast('اختر القسم أولاً', 'err');
   try{
-    const d = JSON.parse(await f.text());
-    // يقبل أيضاً نسخة النموذج الأول (البصمات داخل الطلبة)
-    if (Array.isArray(d.students) && !d.prints){
-      d.prints = {};
-      d.students.forEach(s => { if (s.descriptors && s.descriptors.length) d.prints[s.id] = {samples:s.descriptors, consent:!!s.consent, enrolledAt:s.enrolledAt, stage:s.stage, shift:s.shift, section:s.section}; delete s.descriptors; delete s.consent; delete s.enrolledAt; });
-    }
-    if (!Array.isArray(d.students)) throw 0;
-    const msg = Store.mode === 'local' ? 'ستُستبدل البيانات المحلية بمحتوى النسخة.' : `سيُرفع ${d.students.length} طالب و${Object.keys(d.prints || {}).length} بصمة و${(d.sessions || []).length} محاضرة إلى Firebase (مع تحديث الموجود).`;
+    const x = JSON.parse(await f.text());
+    if (!Array.isArray(x.packs)) throw 0;
+    const sessions = is('super') ? (x.sessions || []) : [];
+    const msg = `سيُستورد ${x.packs.reduce((a, p) => a + Object.keys(p.students || {}).length, 0)} طالب` +
+      (sessions.length ? ` و${sessions.length} محاضرة` : '') + ` إلى قسم "${d.name}"` + (x.deptId && x.deptId !== d.id ? ` (النسخة من قسم آخر: ${x.deptName || x.deptId})` : '') + '.';
     if (!(await confirmBox('استيراد نسخة', msg, 'استيراد'))) return;
-    Store.importData(d); toast('تم الاستيراد', 'ok');
+    x.packs.forEach(p => {
+      const {id, ...data} = p;
+      bg(DB.set('att_packs', packId(d.id, p.stage, p.shift), Object.assign(data, {collegeId:d.collegeId, deptId:d.id, updatedAt:nowISO()}), true).p);
+    });
+    sessions.forEach(s => { const {id, ...data} = s; bg(DB.set('att_sessions', id ? cleanId(id) : null, Object.assign(data, {collegeId:d.collegeId, deptId:d.id})).p); });
+    toast('تم الاستيراد', 'ok');
   }catch(err){ toast('ملف غير صالح', 'err'); }
-  e.target.value = '';
 };
 $('#clearAllBtn').onclick = async () => {
-  if (!(await confirmBox('حذف كل البيانات المحلية', 'سيُحذف كل الطلبة والبصمات وسجلات الحضور من هذا الجهاز. نزّل نسخة احتياطية أولاً.', 'حذف'))) return;
-  Store.students = []; Store.prints = {}; Store.sessions = []; Store.persistLocal(); Store.changed(); toast('تم الحذف', 'ok');
+  if (!(await confirmBox('حذف كل البيانات المحلية', 'سيُحذف كل شيء من هذا الجهاز.', 'حذف'))) return;
+  LFS.d = {}; LFS.persist(); location.reload();
 };
 
-/* ============ تسجيل الدخول ============ */
+/* ============ تسجيل الدخول والتشغيل ============ */
 $('#loginForm').onsubmit = async e => {
   e.preventDefault(); $('#loginErr').textContent = ''; $('#loginBtn').disabled = true;
   try{ await auth.signInWithEmailAndPassword($('#lEmail').value.trim(), $('#lPass').value); }
@@ -696,38 +976,38 @@ $('#forgotLink').onclick = async e => {
 };
 $('#logoutBtn').onclick = async () => {
   if (sess) return toast('أنهِ المحاضرة الجارية أولاً', 'err');
-  if (Store.pending && !(await confirmBox('بيانات غير مرفوعة', `توجد ${Store.pending} محاضرة لم تُرفع بعد. إذا خرجت قد تُفقد. هل تريد الخروج؟`, 'خروج'))) return;
+  if (App.pending && !(await confirmBox('بيانات غير مرفوعة', `توجد ${App.pending} محاضرة لم تُرفع بعد. إذا خرجت قد تُفقد. هل تريد الخروج؟`, 'خروج'))) return;
   await auth.signOut();
 };
-
-/* ============ التشغيل ============ */
+function startSession(user){
+  App.user = user; App.dept = null; App.org = null; App.term = null;
+  showApp(); applyRole(); subOrg(); subUsers();
+}
 async function boot(){
   loadSettingsUI(); registerSW(); loadModels();
   const cfg = window.FIREBASE_CONFIG || {};
   if (!cfg.apiKey){
-    Store.mode = 'local'; Store.loadLocal();
-    Store.user = {uid:'local', name:'المسؤول', role:'admin'};
-    showApp(); return;
+    App.mode = 'local'; DB = LFS; LFS.load();
+    startSession({uid:'local', name:'مدير النظام', role:'super', collegeId:'', deptIds:[]});
+    return;
   }
   if (typeof firebase === 'undefined'){ showLogin('تعذّر تحميل Firebase — افتح التطبيق مع اتصال بالإنترنت مرة واحدة على الأقل'); $('#loginBtn').disabled = true; return; }
   firebase.initializeApp(cfg);
   db = firebase.firestore();
   try{ await db.enablePersistence({synchronizeTabs:true}); }
   catch(e){ console.warn('persistence', e); if (e.code === 'unimplemented') toast('هذا المتصفح لا يدعم العمل دون اتصال', 'err'); }
-  auth = firebase.auth();
-  Store.mode = 'firebase';
+  auth = firebase.auth(); App.mode = 'firebase'; DB = FS;
   auth.onAuthStateChanged(async u => {
-    Store.stop(); Store.user = null;
+    unsubAll(); App.user = null;
     if (!u){ showLogin(); return; }
     try{
-      const d = await db.collection('att_users').doc(u.uid).get();
-      const role = d.exists ? d.data().role : null;
-      if (!role || role === 'disabled' || !ROLES[role]){
-        $('#loginErr').textContent = 'هذا الحساب غير مخوّل باستخدام النظام. راجع رئيس القسم.';
+      const d = await FS.get('att_users', u.uid);
+      const r = d ? normRole(d.role) : null;
+      if (!r || !ACTIVE_ROLES.includes(r)){
+        $('#loginErr').textContent = 'هذا الحساب غير مخوّل باستخدام النظام. راجع رئيس القسم أو مدير النظام.';
         await auth.signOut(); return;
       }
-      Store.user = Object.assign({uid:u.uid, email:u.email}, d.data());
-      Store.subscribe(); showApp();
+      startSession(Object.assign({}, d, {uid:u.uid, email:u.email, role:r, deptIds:d.deptIds || []}));
     }catch(e){
       console.error(e);
       showLogin('تعذّر التحقق من الصلاحية: ' + fbErr(e) + (navigator.onLine ? '' : ' — يلزم الاتصال بالإنترنت عند أول دخول'));
