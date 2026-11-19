@@ -1,5 +1,5 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور (متعدد الكليات والأقسام) — جامعة السراج
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.4
 // المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -16,13 +16,13 @@ service cloud.firestore {
     function lowDean() { return ['head', 'registrar', 'instructor', 'disabled']; }
     function lowHead() { return ['registrar', 'instructor', 'disabled']; }
 
-    // الهيكل التنظيمي: يقرؤه الجميع، ويعدّله مدير النظام
+    // الهيكل التنظيمي: أسماء الكليات والأقسام فقط (يقرؤه الطالب عند تفعيل حسابه)
     match /att_org/{doc} {
-      allow read: if active();
+      allow read: if true;
       allow write: if isSuper();
     }
 
-    // المستخدمون
+    // حسابات الكادر
     match /att_users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isSuper()
         || (active() && role() in ['dean', 'head'] && resource.data.collegeId == me().collegeId));
@@ -42,7 +42,7 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
-    // طلبة وبصمات كل (قسم + مرحلة + دراسة) في مستند واحد
+    // طلبة وبصمات ورموز تفعيل كل (قسم + مرحلة + دراسة) في مستند واحد — للكادر فقط
     match /att_packs/{id} {
       allow read: if resource == null || canSeeDept(resource.data.collegeId, resource.data.deptId);
       allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
@@ -52,7 +52,7 @@ service cloud.firestore {
       allow delete: if isSuper();
     }
 
-    // المحاضرات
+    // المحاضرات المحفوظة
     match /att_sessions/{id} {
       allow read: if isSuper()
         || (active() && resource.data.instructorUid == request.auth.uid)
@@ -64,6 +64,41 @@ service cloud.firestore {
             && (hasDept(request.resource.data.deptId) || isDeanOf(request.resource.data.collegeId)));
       allow update, delete: if isSuper() || isDeanOf(resource.data.collegeId)
         || (active() && role() == 'head' && hasDept(resource.data.deptId));
+      // التدريسي يضيف إلى محاضرته طلبة QR الذين رفعوا حضورهم لاحقاً (دون اتصال) فقط
+      allow update: if active() && resource.data.instructorUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['present', 'absentees', 'qrLate', 'updatedAt']);
+    }
+
+    // حسابات الطلبة: ينشئها موظف التسجيل/رئيس القسم من ملف Excel
+    match /att_stu/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || canSeeDept(resource.data.collegeId, resource.data.deptId));
+      allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
+      allow update: if canManageDept(resource.data.collegeId, resource.data.deptId)
+        && canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
+      allow delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
+    }
+
+    // محاضرة QR مفتوحة (بلا أسرار: الرمز السري يبقى على جهاز التدريسي)
+    match /att_live/{liveId} {
+      allow read: if signedIn();
+      allow create: if isSuper()
+        || (active() && role() in ['dean', 'head', 'instructor']
+            && request.resource.data.instructorUid == request.auth.uid
+            && (hasDept(request.resource.data.deptId) || isDeanOf(request.resource.data.collegeId)));
+      allow update, delete: if signedIn() && (resource.data.instructorUid == request.auth.uid || isSuper());
+
+      // تسجيل الطالب: مستند واحد لكل طالب، بوقت الخادم
+      match /c/{uid} {
+        function live() { return get(/databases/$(database)/documents/att_live/$(liveId)).data; }
+        function stu() { return get(/databases/$(database)/documents/att_stu/$(request.auth.uid)).data; }
+        allow read: if signedIn() && (request.auth.uid == uid || live().instructorUid == request.auth.uid || isSuper());
+        // تُقبل أثناء المحاضرة، أو خلال مهلة الرفع المتأخر للهواتف التي كانت دون اتصال
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && (live().open == true || request.time < live().acceptUntil)
+          && stu().deptId == live().deptId
+          && request.resource.data.sid == stu().sid
+          && request.resource.data.at == request.time;
+      }
     }
   }
 }

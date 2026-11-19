@@ -10,6 +10,9 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
@@ -79,6 +82,23 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .chk-list label{display:flex;gap:6px;align-items:center;color:#1c2733;margin:0}
 .chk-list input{width:auto}
 .chk-list .grp{grid-column:1/-1;font-weight:700;color:var(--navy);margin-top:4px}
+.qr-panel{text-align:center}
+.qr-panel canvas{width:100%;max-width:340px;image-rendering:pixelated;background:#fff;border-radius:10px}
+.qr-code{font-size:34px;font-weight:700;letter-spacing:6px;color:var(--navy);direction:ltr}
+.qr-pin{font-size:15px;color:var(--muted)}
+.qr-bar{height:6px;background:#e8edf2;border-radius:4px;overflow:hidden;margin:6px auto;max-width:340px}
+.qr-bar div{height:100%;background:var(--green);transition:width 1s linear}
+#qrFull{position:fixed;inset:0;background:#fff;z-index:80;display:none;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+#qrFull.show{display:flex}
+#qrFull canvas{width:min(78vh,90vw);height:min(78vh,90vw);image-rendering:pixelated}
+#qrFull .qr-code{font-size:48px}
+.stu-wrap{max-width:520px;margin:0 auto;padding:16px}
+.big-btn{width:100%;padding:18px;font-size:20px;border-radius:14px}
+.scan-box{position:relative;background:#000;border-radius:12px;overflow:hidden;aspect-ratio:1/1}
+.scan-box video{width:100%;height:100%;object-fit:cover}
+.result{padding:14px;border-radius:10px;font-weight:700;text-align:center;margin-top:10px}
+.result.ok{background:#e5f6ee;color:var(--green)}.result.err{background:#fdecea;color:var(--red)}.result.info{background:#e6eef7;color:var(--navy2)}
+.b-qr{background:#e6eef7;color:var(--navy2)}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
 </style>
 </head>
@@ -97,7 +117,36 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     </form>
     <p id="loginErr" style="color:var(--red);min-height:22px"></p>
     <a href="#" id="forgotLink" class="note">نسيت كلمة المرور؟</a>
+    <p class="note" style="margin-top:12px">الطلبة: ادخلوا بالبريد وكلمة المرور المسلّمة لكم من القسم.</p>
   </div>
+</div>
+
+<!-- ============ واجهة الطالب ============ -->
+<div id="studentView" class="hidden">
+<header>
+  <div><h1>حضور الطلبة</h1><small>جامعة السراج</small></div>
+  <div class="hdr"><span id="stConn" class="pill"></span><button id="stInstallBtn" class="btn sm light hidden">⬇ تثبيت</button><button id="stLogout" class="btn sm light">خروج</button></div>
+</header>
+<div class="stu-wrap">
+  <div class="card"><h2 id="stName" style="margin-bottom:4px"></h2><div class="note" id="stInfo"></div></div>
+  <div class="card">
+    <div id="scanArea" class="hidden">
+      <p class="note" style="text-align:center;margin:0 0 6px">وجّه الكاميرا نحو رمز QR على شاشة التدريسي</p>
+      <div class="scan-box"><video id="scanVideo" playsinline muted autoplay></video></div>
+      <button class="btn light" id="scanStop" style="width:100%;margin-top:8px">إيقاف الكاميرا</button>
+    </div>
+    <button class="btn big-btn hidden" id="scanBtn">📷 مسح رمز الحضور</button>
+    <div id="stResult"></div>
+    <details style="margin-top:14px"><summary class="note" style="cursor:pointer">الكاميرا لا تعمل؟ أدخل الرمز يدوياً</summary>
+      <div class="grid" style="margin-top:8px">
+        <div><label>رقم المحاضرة (PIN)</label><input id="mPin" dir="ltr" inputmode="numeric"></div>
+        <div><label>الرمز الظاهر الآن</label><input id="mCode" dir="ltr" inputmode="numeric"></div>
+      </div>
+      <button class="btn" id="mSend" style="margin-top:8px;width:100%">إرسال</button>
+    </details>
+  </div>
+  <p class="note" style="text-align:center">بعد الإرسال تأكد من ظهور اسمك على شاشة التدريسي.</p>
+</div>
 </div>
 
 <!-- ============ التطبيق ============ -->
@@ -136,6 +185,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     <div class="grid">
       <div><label>الرقم الجامعي</label><input id="sId"></div>
       <div><label>الاسم الرباعي</label><input id="sName"></div>
+      <div><label>البريد الإلكتروني (لحساب QR — اختياري)</label><input id="sEmail" type="email" dir="ltr"></div>
       <div><label>المرحلة</label><select id="sStage" class="optStage"></select></div>
       <div><label>الدراسة</label><select id="sShift" class="optShift"></select></div>
       <div><label>الشعبة</label><select id="sSection" class="optSection"></select></div>
@@ -160,7 +210,12 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
         <input id="fSearch" placeholder="بحث بالاسم أو الرقم" style="width:190px">
       </div>
     </div>
-    <div class="tbl-wrap"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>المرحلة</th><th>الدراسة</th><th>الشعبة</th><th>البصمة</th><th>إجراءات</th></tr></thead><tbody id="studentsBody"></tbody></table></div>
+    <div class="row" style="margin-bottom:10px">
+      <button class="btn green sm" id="importBtn">📥 استيراد الطلبة من Excel وإنشاء حساباتهم</button>
+      <button class="btn light sm" id="templateBtn">⬇ تنزيل قالب Excel</button>
+      <button class="btn light sm" id="exportStudentsBtn">📤 تصدير قائمة الطلبة (Excel)</button>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>المرحلة</th><th>الدراسة</th><th>الشعبة</th><th>البصمة</th><th>حساب الطالب</th><th>إجراءات</th></tr></thead><tbody id="studentsBody"></tbody></table></div>
   </div>
 </section>
 
@@ -169,15 +224,17 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
   <div class="card" id="sessionSetup">
     <h2>بيانات المحاضرة — <span class="deptName"></span></h2>
     <div class="grid">
-      <div><label>المادة</label><input id="cName" list="courseList" placeholder="مثال: المعالجات الدقيقة"><datalist id="courseList"></datalist></div>
+      <div id="cAsgBox" class="hidden" style="grid-column:1/-1"><label>المادة (من المواد المسندة إليك)</label><select id="cAsg"></select></div>
+      <div id="cNameBox"><label>المادة</label><input id="cName" list="courseList" placeholder="مثال: المعالجات الدقيقة"><datalist id="courseList"></datalist></div>
       <div><label>المرحلة</label><select id="cStage" class="optStage"></select></div>
       <div><label>الدراسة</label><select id="cShift" class="optShift"></select></div>
       <div><label>الشعبة</label><select id="cSection" class="optSection" data-all="كل الشعب"></select></div>
       <div><label>النوع</label><select id="cType"><option>نظري</option><option>عملي</option></select></div>
       <div><label>عدد الساعات</label><input id="cHours" type="number" min="1" max="6" value="2"></div>
       <div><label>التاريخ</label><input id="cDate" type="date"></div>
+      <div><label>طريقة تسجيل الحضور</label><select id="cMethod"><option value="face">بصمة الوجه</option><option value="qr">QR كود (هواتف الطلبة)</option><option value="both">الاثنان معاً</option></select></div>
     </div>
-    <button class="btn green" id="startSessionBtn" style="margin-top:12px">▶ بدء المحاضرة وتشغيل الكاميرا</button>
+    <button class="btn green" id="startSessionBtn" style="margin-top:12px">▶ بدء المحاضرة</button>
   </div>
   <div id="sessionLive" class="hidden">
     <div class="card">
@@ -191,10 +248,22 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
       </div>
     </div>
     <div class="cam-layout">
-      <div class="card">
+      <div>
+      <div class="card" id="faceCard">
         <div class="cam"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
         <div id="prompt">قف أمام الكاميرا</div>
         <p class="note">طالب واحد أمام الكاميرا في كل مرة. بعد التعرّف عليه ينفّذ حركة التحقق، فيُسجَّل حاضراً تلقائياً.</p>
+      </div>
+      <div class="card qr-panel" id="qrCard">
+        <canvas id="qrCanvas" width="330" height="330"></canvas>
+        <div class="qr-bar"><div id="qrBar" style="width:100%"></div></div>
+        <div class="qr-code" id="qrCode">------</div>
+        <div class="qr-pin">رقم المحاضرة (PIN): <b id="qrPin" dir="ltr">------</b></div>
+        <div id="qrStatus" class="note"></div>
+        <div class="row" style="justify-content:center;margin-top:8px"><button class="btn" id="qrFullBtn">⛶ عرض على الشاشة الكاملة</button></div>
+        <p class="note">يمسح الطلبة الرمز بكاميرا هواتفهم أو من داخل التطبيق. يتغير الرمز كل ١٥ ثانية.</p>
+        <div id="rejBox" class="hidden" style="text-align:right"><b style="color:var(--red)">محاولات مرفوضة:</b><div class="tbl-wrap" style="max-height:180px"><table><tbody id="rejBody"></tbody></table></div></div>
+      </div>
       </div>
       <div class="card">
         <div class="stats">
@@ -219,7 +288,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
       <button class="btn light" id="ovExportBtn">تصدير CSV</button>
     </div>
     <p class="note">يُحمَّل عند الطلب فقط للفصل الحالي. "طلبة تجاوزوا ١٠٪" = طلبة تجاوز غيابهم ١٠٪ من الساعات المنعقدة في مادة واحدة على الأقل.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>الكلية</th><th>القسم</th><th>المحاضرات</th><th>الساعات</th><th>نسبة الحضور</th><th>تسجيل بالوجه</th><th>طلبة تجاوزوا ١٠٪</th></tr></thead><tbody id="ovBody"><tr><td colspan="7" class="note">اختر ثم اضغط "عرض التقرير"</td></tr></tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>الكلية</th><th>القسم</th><th>المحاضرات</th><th>الساعات</th><th>نسبة الحضور</th><th>تسجيل آلي (وجه/QR)</th><th>طلبة تجاوزوا ١٠٪</th></tr></thead><tbody id="ovBody"><tr><td colspan="7" class="note">اختر ثم اضغط "عرض التقرير"</td></tr></tbody></table></div>
   </div>
   <div class="card">
     <h2 id="recTitle">المحاضرات المحفوظة</h2>
@@ -247,7 +316,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
       </div>
     </div>
     <p class="note">مدير النظام: كل الجامعة. العميد: أقسام كليته كلها. رئيس القسم: قسمه (الطلبة، والحضور، والتقارير، وحسابات التدريسيين والموظفين). موظف التسجيل: الطلبة والبصمات. التدريسي: أخذ الحضور في أقسامه وسجلات محاضراته.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الكلية</th><th>الأقسام</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الكلية</th><th>الأقسام / المواد</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
   </div>
 </section>
 
@@ -336,16 +405,48 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
     <div class="grid">
       <div><label>الاسم</label><input id="umName"></div>
       <div><label>البريد الإلكتروني</label><input id="umEmail" type="email" dir="ltr"></div>
-      <div id="umPassBox"><label>كلمة مرور أولية (٦ أحرف على الأقل)</label><input id="umPass" dir="ltr"></div>
+      <div id="umPassBox"><label>الرمز (كلمة المرور — ٦ أحرف على الأقل)</label><div class="row" style="flex-wrap:nowrap"><input id="umPass" dir="ltr"><button class="btn sm light" id="umGen" type="button" title="توليد رمز عشوائي">🎲</button></div></div>
       <div><label>الصلاحية</label><select id="umRole"></select></div>
       <div><label>الكلية</label><select id="umCollege"></select></div>
     </div>
-    <label style="margin-top:10px">الأقسام (للتدريسي الذي يدرّس في أكثر من قسم اختر كل أقسامه)</label>
-    <div class="chk-list" id="umDepts"></div>
+    <div id="umAsgBox" style="margin-top:12px">
+      <div class="row" style="justify-content:space-between"><b style="color:var(--navy)">المواد التي يدرّسها</b><button class="btn sm" id="umAddAsg" type="button">+ إضافة مادة</button></div>
+      <div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>القسم</th><th>اسم المادة</th><th>المرحلة</th><th>الدراسة</th><th>الشعبة</th><th></th></tr></thead><tbody id="umAsgBody"></tbody></table></div>
+      <p class="note">يأخذ التدريسي الحضور لهذه المواد فقط، وتُملأ المرحلة والدراسة والشعبة تلقائياً عند اختيار المادة.</p>
+    </div>
+    <div id="umDeptBox"><label style="margin-top:10px">الأقسام</label><div class="chk-list" id="umDepts"></div></div>
+    <div id="umCred" class="banner hidden" style="margin-top:10px"></div>
     <p class="note" id="umNote"></p>
     <div class="row" style="margin-top:12px;justify-content:flex-end">
       <button class="btn light" id="umCancel">إلغاء</button>
       <button class="btn" id="umSave">حفظ</button>
+    </div>
+  </div>
+</div>
+
+<!-- نافذة استيراد الطلبة من Excel -->
+<div class="modal-bg" id="importModal">
+  <div class="modal" style="width:min(980px,100%)">
+    <h3>استيراد الطلبة من Excel وإنشاء حساباتهم — <span class="deptName"></span></h3>
+    <div id="impStep1">
+      <p class="note">أعمدة الملف (الصف الأول عناوين): <b>الرقم الجامعي</b> | <b>الاسم</b> | <b>البريد الإلكتروني</b> | المرحلة | الدراسة | الشعبة. الأعمدة الثلاثة الأخيرة اختيارية، فإن تُركت فارغة تؤخذ القيم المختارة هنا:</p>
+      <div class="grid">
+        <div><label>المرحلة</label><select id="impStage" class="optStage"></select></div>
+        <div><label>الدراسة</label><select id="impShift" class="optShift"></select></div>
+        <div><label>الشعبة</label><select id="impSection" class="optSection"></select></div>
+        <div><label>ملف Excel</label><input type="file" id="impFile" accept=".xlsx,.xls,.csv"></div>
+      </div>
+    </div>
+    <div class="row" style="margin:10px 0;justify-content:space-between">
+      <b id="impSummary" class="note"></b>
+      <div class="row"><span id="impProgress" class="badge b-gray hidden"></span></div>
+    </div>
+    <div class="tbl-wrap" style="max-height:380px"><table><thead><tr><th>#</th><th>الرقم</th><th>الاسم</th><th>البريد</th><th>المرحلة / الدراسة / الشعبة</th><th>كلمة المرور</th><th>الحالة</th></tr></thead><tbody id="impBody"></tbody></table></div>
+    <p class="note" id="impNote">⚠ كلمات المرور تظهر <b>مرة واحدة فقط</b> ولا تُحفظ في النظام. نزّل ملف Excel بعد الإنشاء مباشرة.</p>
+    <div class="row" style="margin-top:10px;justify-content:flex-end">
+      <button class="btn light" id="impClose">إغلاق</button>
+      <button class="btn amber hidden" id="impExport">⬇ تنزيل Excel (الأسماء والبريد وكلمات المرور)</button>
+      <button class="btn green" id="impRun" disabled>إنشاء الحسابات</button>
     </div>
   </div>
 </div>
@@ -355,6 +456,8 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
   <h3 id="confirmTitle">تأكيد</h3><p id="confirmText"></p>
   <div class="row" style="justify-content:flex-end"><button class="btn light" id="confirmNo">إلغاء</button><button class="btn red" id="confirmYes">تأكيد</button></div>
 </div></div>
+
+<div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
 <script src="app.js"></script>

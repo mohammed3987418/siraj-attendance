@@ -10,7 +10,11 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.4.0';
+const SLOT_MS = 5000; // يتغير رمز QR كل ٥ ثوانٍ
+const QR_GRACE_SLOTS = 4; // يُقبل الرمز حتى ~٢٠ ثانية (زمن المسح والإرسال) عند الاتصال
+const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
+const QR_CAPTURE_TOL = 120000; // فرق مسموح (ملّي ثانية) بين وقت المسح على الهاتف ووقت الرمز
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
 const ROLES = {super:'مدير النظام', dean:'عميد الكلية', head:'رئيس القسم', registrar:'موظف تسجيل', instructor:'تدريسي', disabled:'معطّل'};
 const ACTIVE_ROLES = ['super','dean','head','registrar','instructor'];
@@ -33,6 +37,8 @@ const LS = {
   get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); return true; }catch(e){ toast('تعذّر الحفظ على الجهاز: المساحة غير متاحة', 'err'); return false; } }
 };
+const deviceId = (() => { let d = LS.get('fa_device', null); if (!d){ d = 'D' + Math.random().toString(36).slice(2) + Date.now().toString(36); LS.set('fa_device', d); } return d; })();
+const randHex = n => Array.from(crypto.getRandomValues(new Uint8Array(n)), b => b.toString(16).padStart(2, '0')).join('');
 function toast(msg, type=''){
   const t = document.createElement('div'); t.className = 'toast ' + type; t.textContent = msg;
   $('#toasts').appendChild(t); setTimeout(() => t.remove(), 4500);
@@ -95,6 +101,9 @@ function decDesc(str){
    ===================================================================== */
 const DEL = {__del:true};
 const isDel = v => v && typeof v === 'object' && v.__del === true;
+const TS = {__ts:true}; // وقت الخادم
+const isTs = v => v && typeof v === 'object' && v.__ts === true;
+const tsMillis = v => v == null ? null : typeof v === 'number' ? v : (v.toMillis ? v.toMillis() : null);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const clone = v => JSON.parse(JSON.stringify(v));
 
@@ -103,7 +112,7 @@ const LFS = { // محاكاة محلية
   load(){ this.d = LS.get('fa3_db', {}); },
   persist(){ LS.set('fa3_db', this.d); setTimeout(() => this.subs.slice().forEach(s => s.run()), 0); },
   col(c){ return this.d[c] || (this.d[c] = {}); },
-  merge(a, b){ Object.entries(b).forEach(([k, v]) => { if (isDel(v)) delete a[k]; else if (isObj(v) && isObj(a[k])) this.merge(a[k], v); else a[k] = clone(v); }); return a; },
+  merge(a, b){ Object.entries(b).forEach(([k, v]) => { if (isDel(v)) delete a[k]; else if (isTs(v)) a[k] = Date.now(); else if (isObj(v) && isObj(a[k])) this.merge(a[k], v); else a[k] = clone(v); }); return a; },
   async get(c, id){ const x = this.col(c)[id]; return x ? Object.assign({id}, clone(x)) : null; },
   set(c, id, data, merge){
     id = id || ('L' + Date.now() + Math.random().toString(36).slice(2, 6));
@@ -116,25 +125,27 @@ const LFS = { // محاكاة محلية
     Object.entries(patch).forEach(([k, v]) => {
       const path = k.split('.'); let o = doc;
       for (let i = 0; i < path.length - 1; i++){ if (!isObj(o[path[i]])) o[path[i]] = {}; o = o[path[i]]; }
-      const last = path[path.length - 1]; if (isDel(v)) delete o[last]; else o[last] = clone(v);
+      const last = path[path.length - 1]; if (isDel(v)) delete o[last]; else if (isTs(v)) o[last] = Date.now(); else o[last] = clone(v);
     });
     this.persist(); return {p:Promise.resolve()};
   },
   del(c, id){ delete this.col(c)[id]; this.persist(); return {p:Promise.resolve()}; },
   async query(c, f=[]){ return Object.entries(this.col(c)).filter(([, x]) => f.every(([k, v]) => x[k] === v)).map(([id, x]) => Object.assign({id}, clone(x))); },
+  async queryAfter(c, field, ms){ return (await this.query(c)).filter(x => (tsMillis(x[field]) || 0) > ms); },
   listen(c, f, cb){ const s = {run:() => this.query(c, f).then(l => cb(l))}; this.subs.push(s); s.run(); return () => { this.subs = this.subs.filter(x => x !== s); }; },
   listenDoc(c, id, cb){ const s = {run:() => this.get(c, id).then(cb)}; this.subs.push(s); s.run(); return () => { this.subs = this.subs.filter(x => x !== s); }; }
 };
 
 let db = null, auth = null;
 const FS = { // Firestore
-  conv(v){ if (isDel(v)) return firebase.firestore.FieldValue.delete(); if (isObj(v)){ const o = {}; Object.entries(v).forEach(([k, x]) => o[k] = this.conv(x)); return o; } return v; },
+  conv(v){ if (isDel(v)) return firebase.firestore.FieldValue.delete(); if (isTs(v)) return firebase.firestore.FieldValue.serverTimestamp(); if (isObj(v)){ const o = {}; Object.entries(v).forEach(([k, x]) => o[k] = this.conv(x)); return o; } return v; },
   q(c, f=[]){ let q = db.collection(c); f.forEach(([k, v]) => q = q.where(k, '==', v)); return q; },
   async get(c, id){ const d = await db.collection(c).doc(id).get(); return d.exists ? Object.assign({id:d.id}, d.data()) : null; },
   set(c, id, data, merge){ const ref = id ? db.collection(c).doc(id) : db.collection(c).doc(); return {id:ref.id, p:ref.set(this.conv(data), {merge:!!merge})}; },
   update(c, id, patch){ return {p:db.collection(c).doc(id).update(this.conv(patch))}; },
   del(c, id){ return {p:db.collection(c).doc(id).delete()}; },
   async query(c, f){ return (await this.q(c, f).get()).docs.map(d => Object.assign({id:d.id}, d.data())); },
+  async queryAfter(c, field, ms){ return (await db.collection(c).where(field, '>', firebase.firestore.Timestamp.fromMillis(ms)).get()).docs.map(d => Object.assign({id:d.id}, d.data())); },
   listen(c, f, cb, err){
     return this.q(c, f).onSnapshot({includeMetadataChanges:true},
       s => cb(s.docs.map(d => Object.assign({id:d.id, _pending:d.metadata.hasPendingWrites}, d.data()))), err || onErr);
@@ -187,9 +198,10 @@ function applyRole(){
   $('#aboutText').innerHTML = `الإصدار ${APP_VERSION} — وضع التشغيل: ${App.mode === 'local' ? 'محلي تجريبي' : 'Firebase (مشروع ' + esc((window.FIREBASE_CONFIG || {}).projectId) + ')'}.<br>
     التعرف على الوجه يجري بالكامل داخل هذا الجهاز، ويعمل التطبيق دون إنترنت بعد أول فتح.`;
 }
-function showApp(){ $('#loginView').classList.add('hidden'); $('#appView').classList.remove('hidden'); }
+function showView(id){ ['loginView','studentView','appView'].forEach(v => $('#' + v).classList.toggle('hidden', v !== id)); }
+function showApp(){ showView('appView'); }
 function showLogin(msg){
-  $('#appView').classList.add('hidden'); $('#loginView').classList.remove('hidden');
+  showView('loginView');
   if (msg !== undefined) $('#loginErr').textContent = msg;
   $('#loginBtn').disabled = false;
 }
@@ -246,6 +258,7 @@ function fillDeptOptions(){
   $$('select.optShift').forEach(s => { const v = s.value; s.innerHTML = opts(d.shifts); if ((d.shifts || []).includes(v)) s.value = v; });
   $$('select.optSection').forEach(s => { const v = s.value; s.innerHTML = opts(d.sections, s.dataset.all); if ((d.sections || []).includes(v)) s.value = v; });
   $('#fStage').innerHTML = opts(d.stages, 'كل المراحل'); $('#fShift').innerHTML = opts(d.shifts, 'كل الدراسات');
+  renderAsgSelect();
   $('#allowedVals').textContent = `المراحل: ${(d.stages || []).join('، ')} — الدراسة: ${(d.shifts || []).join('، ')} — الشعب: ${(d.sections || []).join('، ')}`;
 }
 
@@ -269,7 +282,7 @@ function subSessions(){
   else f = [['deptId', d.id], ['term', T]];
   if (f) App.subs.sessions = DB.listen('att_sessions', f, list => {
     App.sessions = list; App.pending = list.filter(x => x._pending).length;
-    renderRecords(); renderCourseList(); updateConn();
+    renderRecords(); renderCourseList(); updateConn(); scheduleReconcile();
   });
   renderRecords(); renderCourseList(); updateConn();
 }
@@ -289,6 +302,49 @@ function subOrg(){
     }
     App.org = doc; renderScope(); renderOrg(); renderOverviewOptions();
   });
+}
+
+/* ============ إضافة حضور QR المتأخر (المرفوع من هواتف كانت دون اتصال) ============ */
+let reconcileTimer = null, reconciling = false;
+function scheduleReconcile(){ clearTimeout(reconcileTimer); reconcileTimer = setTimeout(reconcileQR, 3000); }
+window.addEventListener('online', () => scheduleReconcile());
+setInterval(() => scheduleReconcile(), 5 * 60000);
+async function reconcileQR(){
+  if (reconciling || !App.user || !navigator.onLine && App.mode !== 'local') return;
+  reconciling = true;
+  try{
+    for (const s of App.sessions){
+      if (!s.liveId || !s.qrSecret || s._pending) continue;
+      if (Date.now() > Date.parse(s.acceptUntil || 0) + 3600000) continue;
+      if (!(s.instructorUid === App.user.uid || is('super','dean','head'))) continue;
+      const lsKey = 'fa_rc_' + s.id, since = LS.get(lsKey, 0);
+      let list;
+      try{ list = await DB.queryAfter(`att_live/${s.liveId}/c`, 'at', since); }catch(e){ console.warn(e); continue; }
+      if (!list.length) continue;
+      const q = {secret:s.qrSecret, codes:new Map(), offset:0, firstSlot:s.qrFrom};
+      const present = new Set((s.present || []).map(p => p.id)), devices = {};
+      (s.present || []).forEach(p => { if (p.device) devices[p.device] = p.id; });
+      const roster = new Set([...(s.absentees || []), ...present]), add = [];
+      let maxAt = since;
+      for (const c of list.sort((a, b) => (tsMillis(a.at) || 0) - (tsMillis(b.at) || 0))){
+        maxAt = Math.max(maxAt, tsMillis(c.at) || 0);
+        if (present.has(c.sid) || !roster.has(c.sid)) continue;
+        const v = await validateCheckin(q, c, null, s.qrTo);
+        if (v.reason) continue;
+        if (devices[c.deviceId] && devices[c.deviceId] !== c.sid) continue;
+        devices[c.deviceId] = c.sid; present.add(c.sid);
+        add.push({id:c.sid, method:'qr-off', time:new Date(+c.capturedAt).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}), dist:null, device:c.deviceId});
+      }
+      if (add.length){
+        const ids = new Set(add.map(a => a.id));
+        await DB.update('att_sessions', s.id, {present:[...(s.present || []), ...add], absentees:(s.absentees || []).filter(x => !ids.has(x)),
+          qrLate:(s.qrLate || 0) + add.length, updatedAt:nowISO()}).p;
+        toast(`أُضيف ${add.length} طالب (QR دون اتصال) إلى محاضرة ${s.course} — ${s.date}`, 'ok');
+      }
+      LS.set(lsKey, maxAt);
+    }
+  }catch(e){ console.error(e); }
+  reconciling = false;
 }
 
 /* ============ PWA ============ */
@@ -311,12 +367,12 @@ function registerSW(){
 }
 
 /* ============ نماذج التعرف والكاميرا ============ */
-let modelsReady = false;
+let modelsReady = false, modelsLoading = false;
 function setModelStatus(t, c=''){ const el = $('#modelStatus'); el.textContent = t; el.className = 'pill ' + c; }
 async function loadModels(){
   if (typeof faceapi === 'undefined'){ setModelStatus('مكتبة التعرف غير محمّلة — افتح التطبيق مع إنترنت مرة واحدة', 'err'); return; }
   if (!window.isSecureContext) toast('يجب فتح التطبيق عبر https حتى تعمل الكاميرا', 'err');
-  setModelStatus('جارٍ تحميل نماذج الوجه...');
+  setModelStatus('جارٍ تحميل نماذج الوجه...'); modelsLoading = true;
   try{
     if (faceapi.tf){ try{ await faceapi.tf.setBackend('webgl'); }catch(e){} await faceapi.tf.ready(); }
     await Promise.all([
@@ -368,7 +424,7 @@ function beep(){
 function deptStudents(){
   const out = [];
   Object.values(App.packs).forEach(p => Object.entries(p.students || {}).forEach(([sid, s]) =>
-    out.push({id:sid, name:s.n, section:s.s, stage:p.stage, shift:p.shift, prints:s.p || [], packId:p.id})));
+    out.push({id:sid, name:s.n, section:s.s, stage:p.stage, shift:p.shift, prints:s.p || [], e:s.e || '', u:s.u || '', packId:p.id})));
   return out.sort((a, b) => a.id.localeCompare(b.id, 'en', {numeric:true}));
 }
 function addStudents(rows){
@@ -390,7 +446,13 @@ function addStudents(rows){
 }
 $('#addStudentBtn').onclick = () => {
   if (!App.dept) return toast('اختر القسم أولاً', 'err');
-  const r = addStudents([{id:$('#sId').value, name:$('#sName').value, stage:$('#sStage').value, shift:$('#sShift').value, section:$('#sSection').value}]);
+  const row = {id:cleanId($('#sId').value), name:$('#sName').value.trim(), email:$('#sEmail').value.trim().toLowerCase(), stage:$('#sStage').value, shift:$('#sShift').value, section:$('#sSection').value};
+  if (row.email){
+    if (!row.id || !row.name) return toast('أدخل الرقم الجامعي والاسم', 'err');
+    $('#sId').value = $('#sName').value = $('#sEmail').value = '';
+    openImport([row]); validateImport(); renderImport(); return;
+  }
+  const r = addStudents([row]);
   if (r.added){ toast('تمت الإضافة', 'ok'); $('#sId').value = ''; $('#sName').value = ''; $('#sId').focus(); }
   else toast(r.dup ? 'الرقم الجامعي موجود مسبقاً في القسم' : 'أدخل الرقم الجامعي والاسم', 'err');
 };
@@ -403,26 +465,172 @@ $('#bulkAddBtn').onclick = () => {
   if (r.added && !r.bad) $('#bulkText').value = '';
 };
 ['#fStage','#fShift','#fPrint','#fSearch'].forEach(s => $(s).oninput = renderStudents);
+function filteredStudents(){
+  const st = $('#fStage').value, sh = $('#fShift').value, fp = $('#fPrint').value, q = $('#fSearch').value.trim();
+  return deptStudents().filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
+    (!fp || (fp === 'yes') === (s.prints.length > 0)) && (!q || s.name.includes(q) || s.id.includes(q)));
+}
+function accountCell(s, key){
+  if (s.u) return `<span class="badge b-face">مفعّل</span> <span class="note" dir="ltr">${esc(s.e)}</span> <button class="btn sm light" data-reset="${key}" title="يُرسل رابط تغيير كلمة المرور إلى بريد الطالب">🔑 رابط كلمة مرور</button>`;
+  if (s.e) return `<span class="badge b-man">لم يُنشأ</span> <span class="note" dir="ltr">${esc(s.e)}</span>`;
+  return '<span class="note">—</span>';
+}
 function renderStudents(){
   if (!canManageStudents()) return;
-  const all = deptStudents();
-  const st = $('#fStage').value, sh = $('#fShift').value, fp = $('#fPrint').value, q = $('#fSearch').value.trim();
-  const list = all.filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
-    (!fp || (fp === 'yes') === (s.prints.length > 0)) && (!q || s.name.includes(q) || s.id.includes(q)));
-  $('#studCount').textContent = `${all.length} طالب — ${all.filter(s => s.prints.length).length} لديهم بصمة`;
+  const all = deptStudents(), list = filteredStudents();
+  $('#studCount').textContent = `${all.length} طالب — ${all.filter(s => s.prints.length).length} لديهم بصمة` +
+    ` — ${all.filter(s => s.u).length} لديهم حساب`;
   $('#studentsBody').innerHTML = list.slice(0, 800).map(s => {
     const n = s.prints.length, key = esc(s.packId + '|' + s.id);
     return `<tr><td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.stage)}</td><td>${esc(s.shift)}</td><td>${esc(s.section)}</td>
     <td>${n ? `<span class="badge b-face">مسجّلة (${n})</span>` : '<span class="badge b-abs">غير مسجّلة</span>'}</td>
-    <td class="row"><button class="btn sm" data-enroll="${key}">${n ? 'إعادة التسجيل' : 'تسجيل البصمة'}</button>
+    <td>${accountCell(s, key)}</td>
+    <td class="row"><button class="btn sm" data-enroll="${key}">${n ? 'إعادة البصمة' : 'تسجيل البصمة'}</button>
     ${n ? `<button class="btn sm light" data-clear="${key}">حذف البصمة</button>` : ''}
     <button class="btn sm red" data-del="${key}">حذف</button></td></tr>`;
-  }).join('') || `<tr><td colspan="7" class="note">${App.dept ? 'لا يوجد طلبة' : 'اختر القسم'}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" class="note">${App.dept ? 'لا يوجد طلبة' : 'اختر القسم'}</td></tr>`;
 }
+/* ---- استيراد الطلبة من Excel وإنشاء حساباتهم ---- */
+const HDR = {id:['الرقم الجامعي','الرقم','id','student id','رقم'], name:['الاسم','اسم الطالب','الاسم الرباعي','name'],
+  email:['البريد الإلكتروني','البريد','الايميل','الإيميل','email','e-mail'], stage:['المرحلة','stage'], shift:['الدراسة','shift'], section:['الشعبة','section']};
+const genPass = () => { const c = 'abcdefghjkmnpqrstuvwxyz23456789'; return Array.from(crypto.getRandomValues(new Uint8Array(8)), b => c[b % c.length]).join(''); };
+const emailOk = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
+let imp = null; // {rows:[{id,name,email,stage,shift,section,pass,status,ok}], running}
+function needXLSX(){ if (typeof XLSX === 'undefined'){ toast('مكتبة Excel غير محمّلة — افتح التطبيق مع إنترنت', 'err'); return false; } return true; }
+$('#templateBtn').onclick = () => {
+  if (!needXLSX()) return;
+  const d = App.dept || {stages:['الأولى'], shifts:['صباحي'], sections:['A']};
+  const ws = XLSX.utils.aoa_to_sheet([['الرقم الجامعي','الاسم','البريد الإلكتروني','المرحلة','الدراسة','الشعبة'],
+    ['2025001','أحمد محمد علي حسن','ahmed@example.com', d.stages[0], d.shifts[0], (d.sections || [''])[0]]]);
+  ws['!cols'] = [{wch:14},{wch:30},{wch:30},{wch:10},{wch:10},{wch:8}];
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'الطلبة');
+  XLSX.writeFile(wb, 'قالب_الطلبة.xlsx');
+};
+$('#exportStudentsBtn').onclick = () => {
+  if (!needXLSX() || !App.dept) return;
+  const rows = filteredStudents().map(s => [s.id, s.name, s.e, s.stage, s.shift, s.section, s.prints.length ? 'نعم' : 'لا', s.u ? 'نعم' : 'لا']);
+  const ws = XLSX.utils.aoa_to_sheet([['الرقم الجامعي','الاسم','البريد الإلكتروني','المرحلة','الدراسة','الشعبة','بصمة الوجه','حساب QR'], ...rows]);
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'الطلبة');
+  XLSX.writeFile(wb, `طلبة_${App.dept.id}_${today()}.xlsx`);
+};
+function openImport(rows){
+  if (!App.dept) return toast('اختر القسم أولاً', 'err');
+  imp = {rows:rows || [], running:false, done:false};
+  $('#impStep1').classList.toggle('hidden', !!rows); $('#impFile').value = '';
+  $('#impExport').classList.add('hidden'); $('#impProgress').classList.add('hidden');
+  fillDeptOptions(); renderImport(); $('#importModal').classList.add('show');
+}
+$('#importBtn').onclick = () => openImport(null);
+$('#impClose').onclick = async () => {
+  if (imp && imp.running) return toast('انتظر حتى ينتهي الإنشاء', 'err');
+  if (imp && imp.done && !imp.exported && imp.rows.some(r => r.pass && r.ok) &&
+      !(await confirmBox('لم تنزّل الملف', 'كلمات المرور لن تظهر مرة أخرى. هل تريد الإغلاق دون تنزيل ملف Excel؟', 'إغلاق'))) return;
+  $('#importModal').classList.remove('show'); imp = null;
+};
+$('#impFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f || !needXLSX()) return;
+  try{
+    const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:'', raw:false});
+    if (!aoa.length) throw 0;
+    const head = aoa[0].map(h => String(h).trim().toLowerCase());
+    const col = k => head.findIndex(h => HDR[k].some(x => h === x.toLowerCase()));
+    const ix = {id:col('id'), name:col('name'), email:col('email'), stage:col('stage'), shift:col('shift'), section:col('section')};
+    let body = aoa.slice(1);
+    if (ix.name < 0){ ix.id = 0; ix.name = 1; ix.email = 2; ix.stage = 3; ix.shift = 4; ix.section = 5; body = head.some(h => emailOk(h)) ? aoa : aoa.slice(1); }
+    const v = (r, k) => ix[k] >= 0 ? String(r[ix[k]] ?? '').trim() : '';
+    imp.rows = body.filter(r => r.some(x => String(x).trim())).map(r => ({
+      id:cleanId(v(r, 'id')), name:v(r, 'name'), email:v(r, 'email').toLowerCase(),
+      stage:v(r, 'stage') || $('#impStage').value, shift:v(r, 'shift') || $('#impShift').value, section:v(r, 'section') || $('#impSection').value}));
+    validateImport(); renderImport();
+  }catch(err){ console.error(err); toast('تعذّرت قراءة الملف — تأكد أنه ملف Excel بالأعمدة المطلوبة', 'err'); }
+};
+function validateImport(){
+  const d = App.dept, existing = Object.fromEntries(deptStudents().map(s => [s.id, s])), seenId = {}, seenEmail = {};
+  deptStudents().forEach(s => { if (s.e) seenEmail[s.e] = s.id; });
+  imp.rows.forEach(r => {
+    r.ok = false; r.status = '';
+    if (!r.id) r.status = 'الرقم الجامعي فارغ';
+    else if (!r.name) r.status = 'الاسم فارغ';
+    else if (!emailOk(r.email)) r.status = 'البريد غير صالح';
+    else if (!d.stages.includes(r.stage) || !d.shifts.includes(r.shift) || ((d.sections || []).length && !d.sections.includes(r.section))) r.status = 'مرحلة/دراسة/شعبة غير معرّفة للقسم';
+    else if (seenId[r.id]) r.status = 'رقم مكرر في الملف';
+    else if (seenEmail[r.email] && seenEmail[r.email] !== r.id) r.status = 'البريد مستخدم لطالب آخر';
+    else if (existing[r.id] && existing[r.id].u) r.status = 'لديه حساب مسبقاً';
+    else {
+      r.ok = true; r.status = existing[r.id] ? 'جاهز (موجود — سيُنشأ حسابه)' : 'جاهز';
+      if (existing[r.id]){ const x = existing[r.id]; r.stage = x.stage; r.shift = x.shift; r.section = x.section; }
+    }
+    if (r.id) seenId[r.id] = true; if (r.email) seenEmail[r.email] = seenEmail[r.email] || r.id;
+  });
+}
+function renderImport(){
+  if (!imp) return;
+  const ok = imp.rows.filter(r => r.ok).length, created = imp.rows.filter(r => r.created).length;
+  $('#impSummary').textContent = imp.rows.length ? `${imp.rows.length} صف — ${ok} جاهز` + (created ? ` — ${created} حساب أُنشئ` : '') : 'اختر ملف Excel';
+  $('#impBody').innerHTML = imp.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td dir="ltr" style="text-align:right">${esc(r.email)}</td>
+    <td>${esc(r.stage)} / ${esc(r.shift)} / ${esc(r.section)}</td><td dir="ltr" style="font-family:monospace">${r.created ? esc(r.pass) : ''}</td>
+    <td><span class="badge ${r.created ? 'b-face' : r.ok ? 'b-gray' : 'b-abs'}">${esc(r.status)}</span></td></tr>`).join('');
+  $('#impRun').disabled = imp.running || imp.done || !ok;
+  $('#impExport').classList.toggle('hidden', !imp.rows.some(r => r.created));
+}
+async function createStudentAccount(r){
+  if (App.mode === 'local') return 'L' + Date.now() + Math.random().toString(36).slice(2, 6);
+  const sec = firebase.apps.find(a => a.name === 'secondary') || firebase.initializeApp(window.FIREBASE_CONFIG, 'secondary');
+  const cred = await sec.auth().createUserWithEmailAndPassword(r.email, r.pass);
+  const uid = cred.user.uid; await sec.auth().signOut(); return uid;
+}
+$('#impRun').onclick = async () => {
+  const d = App.dept, rows = imp.rows.filter(r => r.ok && !r.created);
+  if (!rows.length) return;
+  if (App.mode !== 'local' && !navigator.onLine) return toast('إنشاء الحسابات يحتاج اتصالاً بالإنترنت', 'err');
+  imp.running = true; renderImport(); $('#impProgress').classList.remove('hidden');
+  // ١) إضافة الطلبة الجدد إلى قوائم القسم
+  const exist = new Set(deptStudents().map(s => s.id));
+  addStudents(rows.filter(r => !exist.has(r.id)));
+  let n = 0, stopped = false;
+  for (const r of rows){
+    $('#impProgress').textContent = `جارٍ الإنشاء ${++n} / ${rows.length}`;
+    r.pass = genPass(); r.status = 'جارٍ...'; renderImport();
+    try{
+      const uid = await createStudentAccount(r), pid = packId(d.id, r.stage, r.shift);
+      await DB.set('att_stu', uid, {sid:r.id, name:r.name, email:r.email, deptId:d.id, collegeId:d.collegeId, stage:r.stage, shift:r.shift, section:r.section, createdAt:nowISO(), createdBy:App.user.uid}).p;
+      bg(DB.set('att_packs', pid, {collegeId:d.collegeId, deptId:d.id, stage:r.stage, shift:r.shift, updatedAt:nowISO(),
+        students:{[r.id]:{n:r.name, s:r.section, e:r.email, u:uid}}}, true).p);
+      r.created = true; r.status = 'تم إنشاء الحساب ✓';
+    }catch(e){
+      console.error(e); r.pass = '';
+      if (e.code === 'auth/too-many-requests' || e.code === 'auth/quota-exceeded'){ r.status = 'توقف: تجاوز حد Firebase'; stopped = true; }
+      else r.status = e.code === 'auth/email-already-in-use' ? 'البريد له حساب مسبقاً في النظام' : fbErr(e);
+    }
+    renderImport();
+    if (stopped) break;
+    await new Promise(res => setTimeout(res, 250));
+  }
+  imp.running = false; imp.done = !stopped; $('#impProgress').textContent = stopped ? 'توقف' : 'انتهى';
+  if (stopped){ imp.done = false; toast('أوقف Firebase الإنشاء مؤقتاً (حد ١٠٠ حساب في الساعة من نفس الشبكة). نزّل الملف الآن، ثم أكمل لاحقاً أو ارفع الحد من لوحة Firebase.', 'err'); }
+  renderImport();
+  if (imp.rows.some(r => r.created)) toast('نزّل ملف Excel الآن — كلمات المرور لن تظهر مرة أخرى', 'ok');
+};
+$('#impExport').onclick = () => {
+  if (!needXLSX()) return;
+  const d = App.dept, link = location.origin + location.pathname.replace(/index\.html$/, '');
+  const rows = imp.rows.filter(r => r.created).map(r => [r.id, r.name, r.email, r.pass, r.stage, r.shift, r.section]);
+  const ws = XLSX.utils.aoa_to_sheet([['رابط النظام', link], [], ['الرقم الجامعي','الاسم','البريد الإلكتروني (اسم الدخول)','كلمة المرور','المرحلة','الدراسة','الشعبة'], ...rows]);
+  ws['!cols'] = [{wch:14},{wch:30},{wch:32},{wch:14},{wch:10},{wch:10},{wch:8}];
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'حسابات الطلبة');
+  XLSX.writeFile(wb, `حسابات_الطلبة_${d.id}_${today()}.xlsx`); imp.exported = true;
+};
 const findStudent = key => { const [pid, sid] = key.split('|'); return deptStudents().find(s => s.packId === pid && s.id === sid); };
 $('#studentsBody').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.enroll) return openEnroll(findStudent(b.dataset.enroll));
+  if (b.dataset.reset){
+    const st = findStudent(b.dataset.reset); if (!st || !st.e) return;
+    if (App.mode === 'local') return toast('متاح بعد ربط Firebase', 'err');
+    if (!(await confirmBox('تغيير كلمة مرور الطالب', `سيُرسل رابط تعيين كلمة مرور جديدة إلى ${st.e}.`, 'إرسال'))) return;
+    try{ await auth.sendPasswordResetEmail(st.e); toast('أُرسل الرابط إلى بريد الطالب', 'ok'); }catch(e){ toast('تعذّر الإرسال: ' + fbErr(e), 'err'); }
+  }
   if (b.dataset.clear && await confirmBox('حذف البصمة', 'سيتم حذف بصمة وجه هذا الطالب نهائياً.', 'حذف')){
     const s = findStudent(b.dataset.clear);
     bg(DB.update('att_packs', s.packId, {[`students.${s.id}.p`]:DEL, [`students.${s.id}.c`]:DEL, updatedAt:nowISO()}).p);
@@ -515,6 +723,22 @@ $('#enrollSave').onclick = async () => {
    ===================================================================== */
 let sess = null, matcher = null, loopOn = false, track = {id:null};
 $('#cDate').value = today();
+const myAsg = () => (is('instructor') && App.dept) ? (App.user.assignments || []).filter(a => a.deptId === App.dept.id) : [];
+function renderAsgSelect(){
+  const limited = is('instructor') && (App.user.assignments || []).length > 0, list = myAsg();
+  $('#cAsgBox').classList.toggle('hidden', !limited); $('#cNameBox').classList.toggle('hidden', limited);
+  ['#cStage','#cShift','#cSection'].forEach(x => $(x).disabled = limited);
+  if (!limited) return;
+  $('#cAsg').innerHTML = list.length ? list.map((a, i) => `<option value="${i}">${esc(a.course)} — ${esc(a.stage)} / ${esc(a.shift)} / ${esc(a.section || 'كل الشعب')}</option>`).join('')
+    : '<option value="">لا توجد مواد مسندة لك في هذا القسم</option>';
+  $('#startSessionBtn').disabled = !list.length;
+  applyAsg();
+}
+function applyAsg(){
+  const a = myAsg()[+$('#cAsg').value]; if (!a) return;
+  $('#cName').value = a.course; $('#cStage').value = a.stage; $('#cShift').value = a.shift; $('#cSection').value = a.section || '';
+}
+$('#cAsg').onchange = applyAsg;
 function renderCourseList(){
   const set = new Set(App.sessions.filter(s => !App.dept || s.deptId === App.dept.id).map(s => s.course));
   $('#courseList').innerHTML = [...set].map(c => `<option value="${esc(c)}">`).join('');
@@ -522,7 +746,8 @@ function renderCourseList(){
 $('#startSessionBtn').onclick = async () => {
   const d = App.dept;
   if (!d) return toast('اختر القسم أولاً', 'err');
-  if (!modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه', 'err');
+  const method = $('#cMethod').value, useFace = method !== 'qr', useQR = method !== 'face';
+  if (useFace && !modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه، أو اختر طريقة QR', 'err');
   const meta = {collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term,
     course:$('#cName').value.trim(), stage:$('#cStage').value, shift:$('#cShift').value, section:$('#cSection').value,
     type:$('#cType').value, hours:+$('#cHours').value || 1, date:$('#cDate').value || today(),
@@ -536,18 +761,123 @@ $('#startSessionBtn').onclick = async () => {
   const studs = Object.entries((pack && pack.students) || {}).map(([id, s]) => ({id, name:s.n, section:s.s, prints:s.p || []}));
   const roster = studs.filter(s => !meta.section || s.section === meta.section).sort((a, b) => a.name.localeCompare(b.name, 'ar'));
   if (!roster.length) return toast('لا يوجد طلبة بهذه المرحلة/الدراسة/الشعبة (أو لم تُحمَّل بعد — افتحها مرة مع إنترنت)', 'err');
-  const prints = {}; studs.forEach(s => { if (s.prints.length) prints[s.id] = s.prints.map(decDesc); });
-  matcher = buildMatcher(prints, Settings.get().threshold);
-  const noPrint = roster.filter(s => !prints[s.id]).length;
-  if (!matcher) toast('لا توجد بصمات مسجّلة لهذه المرحلة — سجّل الحضور يدوياً', 'err');
-  else if (noPrint) toast(`${noPrint} طالب بدون بصمة — سجّلهم يدوياً`, 'err');
-  sess = {meta, names:Object.fromEntries(studs.map(s => [s.id, s.name])), hasPrint:prints,
+  const prints = {};
+  if (useFace){
+    studs.forEach(s => { if (s.prints.length) prints[s.id] = s.prints.map(decDesc); });
+    matcher = buildMatcher(prints, Settings.get().threshold);
+    const noPrint = roster.filter(s => !prints[s.id]).length;
+    if (!matcher) toast('لا توجد بصمات مسجّلة لهذه المرحلة — سجّل الحضور يدوياً أو بـ QR', 'err');
+    else if (noPrint && !useQR) toast(`${noPrint} طالب بدون بصمة — سجّلهم يدوياً`, 'err');
+  } else matcher = null;
+  meta.method = method;
+  sess = {method, useFace, useQR, meta, names:Object.fromEntries(studs.map(s => [s.id, s.name])), hasPrint:prints,
           roster:new Map(roster.map(s => [s.id, {status:'absent', time:'', dist:null}]))};
   $('#sessionSetup').classList.add('hidden'); $('#sessionLive').classList.remove('hidden');
   $('#liveTitle').textContent = `${meta.course} — ${d.name} — ${meta.stage} / ${meta.shift}${meta.section ? ' / شعبة ' + meta.section : ''} — ${meta.type} (${meta.hours} ساعة) — ${meta.date}`;
   $('#rosterSearch').value = ''; renderRoster();
-  if (matcher) await resumeCamera(); else showPrompt('لا توجد بصمات — التسجيل يدوي', 'warn');
+  $('#faceCard').classList.toggle('hidden', !useFace); $('#qrCard').classList.toggle('hidden', !useQR);
+  $('#pauseBtn').classList.toggle('hidden', !useFace);
+  $('#rejBox').classList.add('hidden'); $('#rejBody').innerHTML = '';
+  if (useQR) startQR();
+  if (useFace){ if (matcher) await resumeCamera(); else showPrompt('لا توجد بصمات — التسجيل يدوي', 'warn'); }
 };
+
+/* ============ QR: رمز متغيّر يعرضه التدريسي ويمسحه الطلبة ============ */
+const appBase = () => location.origin + location.pathname.replace(/index\.html$/, '');
+async function codeFor(q, slot){
+  if (q.codes.has(slot)) return q.codes.get(slot);
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(q.secret + ':' + slot));
+  const v = new DataView(buf).getUint32(0) % 1000000, code = String(v).padStart(6, '0');
+  q.codes.set(slot, code); return code;
+}
+function drawQR(canvas, text){
+  const ctx = canvas.getContext('2d'), size = canvas.width;
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, size, canvas.height);
+  if (typeof qrcode === 'undefined'){ ctx.fillStyle = '#c0392b'; ctx.font = '16px Tahoma'; ctx.textAlign = 'center'; ctx.fillText('مكتبة QR غير محمّلة — يلزم إنترنت', size / 2, size / 2); return; }
+  const qr = qrcode(0, 'M'); qr.addData(text); qr.make();
+  const n = qr.getModuleCount(), cell = Math.floor(size / (n + 8)), off = Math.floor((size - cell * n) / 2);
+  ctx.fillStyle = '#000';
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) ctx.fillRect(off + c * cell, off + r * cell, cell, cell);
+}
+function startQR(){
+  const m = sess.meta, secret = randHex(16), pin = String(100000 + Math.floor(Math.random() * 900000));
+  const w = DB.set('att_live', null, {collegeId:m.collegeId, deptId:m.deptId, deptName:m.deptName, course:m.course, stage:m.stage, shift:m.shift,
+    section:m.section, instructorUid:m.instructorUid, instructorName:m.instructorName, pin, open:true, startedAt:TS, localStart:Date.now(),
+    acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000)});
+  const firstSlot = Math.floor(Date.now() / SLOT_MS);
+  const q = sess.qr = {liveId:w.id, secret, pin, firstSlot, offset:0, codes:new Map(), seen:{}, devices:{}, rejected:[], slot:null, chain:Promise.resolve()};
+  bg(w.p);
+  $('#qrPin').textContent = pin; $('#qrFullPin').textContent = pin;
+  $('#qrFullTitle').textContent = `${m.course} — ${m.deptName} — ${m.stage} / ${m.shift}`;
+  $('#qrStatus').textContent = App.mode === 'local' ? 'وضع محلي: للتجربة فقط' :
+    navigator.onLine ? '' : '⚠ غير متصل: يحفظ الطلبة حضورهم على هواتفهم، وتُضاف أسماؤهم إلى هذه المحاضرة تلقائياً عند توفر الإنترنت.';
+  App.subs.live = DB.listenDoc('att_live', q.liveId, d => {
+    const st = d && tsMillis(d.startedAt);
+    if (st && d.localStart && sess && sess.qr === q) q.offset = st - d.localStart; // فرق ساعة الجهاز عن الخادم
+  });
+  App.subs.checkins = DB.listen(`att_live/${q.liveId}/c`, [], list => { q.chain = q.chain.then(() => handleCheckins(q, list)).catch(console.error); });
+  q.timer = setInterval(() => qrTick(q), 1000); qrTick(q);
+}
+async function qrTick(q){
+  if (!sess || sess.qr !== q) return;
+  const now = Date.now(), slot = Math.floor(now / SLOT_MS), left = SLOT_MS - (now % SLOT_MS);
+  $('#qrBar').style.width = (left / SLOT_MS * 100) + '%';
+  $('#qrFullCount').textContent = `يتغير خلال ${Math.ceil(left / 1000)} ثانية`;
+  if (slot === q.slot) return;
+  q.slot = slot;
+  const code = await codeFor(q, slot), text = `${appBase()}?a=${q.liveId}.${slot}.${code}`;
+  $('#qrCode').textContent = code; $('#qrFullCode').textContent = code;
+  drawQR($('#qrCanvas'), text);
+  if ($('#qrFull').classList.contains('show')) drawQR($('#qrFullCanvas'), text);
+  q.text = text;
+  for (const k of q.codes.keys()) if (k < slot - 20) q.codes.delete(k);
+}
+async function handleCheckins(q, list){
+  if (!sess || sess.qr !== q) return;
+  for (const c of list){
+    const at = tsMillis(c.at); if (at == null) continue; // ينتظر وقت الخادم
+    const key = c.id + ':' + at; if (q.seen[key]) continue; q.seen[key] = true;
+    const v = await validateCheckin(q, c, at, Math.floor(Date.now() / SLOT_MS));
+    let reason = v.reason;
+    if (!reason && !sess.roster.has(c.sid)) reason = 'ليس ضمن هذه الشعبة';
+    else if (!reason && q.devices[c.deviceId] && q.devices[c.deviceId] !== c.sid) reason = 'الهاتف نفسه استُخدم لطالب آخر: ' + (sess.names[q.devices[c.deviceId]] || q.devices[c.deviceId]);
+    if (reason){ q.rejected.unshift({sid:c.sid, name:sess.names[c.sid] || c.sid, reason, time:hhmm()}); renderRejected(q); continue; }
+    q.devices[c.deviceId] = c.sid;
+    const st = sess.roster.get(c.sid);
+    if (st.status === 'absent'){ st.device = c.deviceId; markPresent(c.sid, v.method); }
+  }
+}
+// التحقق من تسجيل QR: الرمز يجب أن يطابق الرمز السري لتلك الخانة الزمنية،
+// وإما أن يصل حياً خلال ~٢٠ ثانية (وقت الخادم)، أو يكون مسجّلاً على الهاتف دون اتصال بوقت مسح مطابق لوقت الرمز
+async function validateCheckin(q, c, at, lastSlot){
+  const slot = +c.slot, code = String(c.code || '');
+  if (!(slot >= q.firstSlot - 1 && slot <= lastSlot + 1) || code !== await codeFor(q, slot)) return {reason:'رمز غير صحيح'};
+  if (at != null){
+    const sLocal = Math.floor((at - q.offset) / SLOT_MS);
+    if (sLocal - slot <= QR_GRACE_SLOTS && sLocal - slot >= -1) return {method:'qr'};
+  }
+  const cap = +c.capturedAt || 0;
+  if (Math.abs(cap - (slot * SLOT_MS + SLOT_MS / 2)) <= QR_CAPTURE_TOL) return {method:'qr-off'};
+  return {reason:'رمز منتهي الصلاحية'};
+}
+function renderRejected(q){
+  $('#rejBox').classList.toggle('hidden', !q.rejected.length);
+  $('#rejBody').innerHTML = q.rejected.slice(0, 50).map(r => `<tr><td>${esc(r.name)} <span class="note" dir="ltr">${esc(r.sid)}</span></td><td>${esc(r.reason)}</td><td>${r.time}</td></tr>`).join('');
+}
+function stopQR(){
+  const q = sess && sess.qr; if (!q) return;
+  clearInterval(q.timer); unsub('live'); unsub('checkins');
+  bg(DB.update('att_live', q.liveId, {open:false, closedAt:TS}).p);
+  $('#qrFull').classList.remove('show'); sess.qr = null;
+}
+$('#qrFullBtn').onclick = () => {
+  const q = sess && sess.qr; if (!q) return;
+  $('#qrFull').classList.add('show'); if (q.text) drawQR($('#qrFullCanvas'), q.text);
+  try{ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }catch(e){}
+};
+function closeQrFull(){ $('#qrFull').classList.remove('show'); try{ document.fullscreenElement && document.exitFullscreen(); }catch(e){} }
+$('#qrFullClose').onclick = closeQrFull;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeQrFull(); });
 async function resumeCamera(){
   try{ await startCamera($('#video')); loopOn = true; track = {id:null}; $('#pauseBtn').textContent = '⏸ إيقاف الكاميرا مؤقتاً'; recognitionLoop(); }
   catch(e){ console.error(e); showPrompt('تعذّر تشغيل الكاميرا — اسمح للتطبيق باستخدامها', 'err'); }
@@ -603,6 +933,7 @@ function markPresent(id, method, d=null){
   const st = sess.roster.get(id); if (!st) return;
   st.status = method; st.time = hhmm(); st.dist = d;
   if (method === 'face'){ beep(); showPrompt(`✓ ${sess.names[id] || id} — حاضر`, 'ok'); }
+  if (method === 'qr' || method === 'qr-off') beep();
   renderRoster();
 }
 $('#rosterSearch').oninput = renderRoster;
@@ -614,9 +945,9 @@ function renderRoster(){
     .filter(([id]) => !q || (sess.names[id] || '').includes(q) || id.includes(q))
     .sort((a, b) => (a[1].status === 'absent') - (b[1].status === 'absent'));
   $('#rosterBody').innerHTML = rows.map(([id, st]) => {
-    const badge = st.status === 'face' ? '<span class="badge b-face">حاضر (وجه)</span>' : st.status === 'manual' ? '<span class="badge b-man">حاضر (يدوي)</span>' : '<span class="badge b-abs">غائب</span>';
+    const badge = st.status === 'qr-off' ? '<span class="badge b-qr">حاضر (QR دون اتصال)</span>' : st.status === 'qr' ? '<span class="badge b-qr">حاضر (QR)</span>' : st.status === 'face' ? '<span class="badge b-face">حاضر (وجه)</span>' : st.status === 'manual' ? '<span class="badge b-man">حاضر (يدوي)</span>' : '<span class="badge b-abs">غائب</span>';
     const btn = st.status === 'absent' ? `<button class="btn sm light" data-man="${esc(id)}">حاضر يدوياً</button>` : `<button class="btn sm light" data-undo="${esc(id)}">إلغاء</button>`;
-    return `<tr><td>${esc(sess.names[id] || id)}${sess.hasPrint[id] ? '' : ' <span class="badge b-gray">بلا بصمة</span>'}</td><td>${badge}</td><td>${st.time}</td><td>${btn}</td></tr>`;
+    return `<tr><td>${esc(sess.names[id] || id)}${(!sess.useFace || sess.hasPrint[id]) ? '' : ' <span class="badge b-gray">بلا بصمة</span>'}</td><td>${badge}</td><td>${st.time}</td><td>${btn}</td></tr>`;
   }).join('');
   $('#stPresent').textContent = present; $('#stTotal').textContent = sess.roster.size; $('#stAbsent').textContent = sess.roster.size - present;
 }
@@ -626,7 +957,7 @@ $('#rosterBody').onclick = e => {
   if (b.dataset.undo){ const st = sess.roster.get(b.dataset.undo); st.status = 'absent'; st.time = ''; st.dist = null; track = {id:null}; renderRoster(); }
 };
 function endSessionUI(){
-  loopOn = false; stopCamera($('#video')); sess = null; matcher = null;
+  stopQR(); loopOn = false; stopCamera($('#video')); sess = null; matcher = null;
   $('#sessionLive').classList.add('hidden'); $('#sessionSetup').classList.remove('hidden');
 }
 $('#cancelSessionBtn').onclick = async () => {
@@ -639,9 +970,13 @@ $('#finishBtn').onclick = async () => {
   entries.forEach(([id]) => names[id] = sess.names[id] || id);
   const rec = Object.assign({}, sess.meta, {
     absentees: entries.filter(([, s]) => s.status === 'absent').map(([id]) => id),
-    present: entries.filter(([, s]) => s.status !== 'absent').map(([id, s]) => ({id, method:s.status, time:s.time, dist:s.dist == null ? null : +s.dist.toFixed(3)})),
+    present: entries.filter(([, s]) => s.status !== 'absent').map(([id, s]) => Object.assign({id, method:s.status, time:s.time, dist:s.dist == null ? null : +s.dist.toFixed(3)}, s.device ? {device:s.device} : {})),
     names, createdAt:nowISO(), appVersion:APP_VERSION
   });
+  if (sess.qr){ // لإضافة طلبة QR الذين يرفعون حضورهم لاحقاً (دون اتصال)
+    Object.assign(rec, {liveId:sess.qr.liveId, qrSecret:sess.qr.secret, qrFrom:sess.qr.firstSlot, qrTo:Math.floor(Date.now() / SLOT_MS),
+      acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000).toISOString(), qrLate:0});
+  }
   const w = DB.set('att_sessions', null, rec);
   if (App.mode === 'local') toast('تم حفظ حضور المحاضرة', 'ok');
   else {
@@ -664,7 +999,7 @@ function renderRecords(){
   const canDel = is('super','dean','head');
   $('#sessionsBody').innerHTML = list.map(s => `<tr><td>${esc(s.date)}</td><td>${esc(s.deptName || deptName(s.deptId))}</td><td>${esc(s.course)}</td>
     <td>${esc(s.stage)} / ${esc(s.shift)} / ${esc(s.section || 'الكل')}</td><td>${esc(s.type)}</td><td>${s.hours}</td><td>${esc(s.instructorName || '')}</td>
-    <td>${(s.present || []).length}</td><td>${(s.absentees || []).length}</td>
+    <td>${(s.present || []).length}${s.qrLate ? ` <span class="badge b-qr" title="أُضيفوا لاحقاً من هواتف كانت دون اتصال">+${s.qrLate} QR</span>` : ''}</td><td>${(s.absentees || []).length}</td>
     <td>${App.mode === 'local' ? '<span class="badge b-gray">محلي</span>' : s._pending ? '<span class="badge b-man">بانتظار الرفع</span>' : '<span class="badge b-face">مرفوع ✓</span>'}</td>
     <td class="row"><button class="btn sm light" data-csv="${esc(s.id)}">CSV</button>${canDel ? `<button class="btn sm red" data-sdel="${esc(s.id)}">حذف</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="11" class="note">لا توجد محاضرات محفوظة في هذا الفصل</td></tr>';
@@ -680,7 +1015,7 @@ $('#sessionsBody').onclick = async e => {
     const nm = id => (s.names && s.names[id]) || id;
     const rows = [['القسم', s.deptName || deptName(s.deptId), 'المادة', s.course, 'التاريخ', s.date, 'الساعات', s.hours],
                   ['الرقم','الاسم','الحالة','طريقة التسجيل','الوقت']];
-    (s.present || []).forEach(p => rows.push([p.id, nm(p.id), 'حاضر', p.method === 'face' ? 'بصمة وجه' : 'يدوي', p.time]));
+    (s.present || []).forEach(p => rows.push([p.id, nm(p.id), 'حاضر', {face:'بصمة وجه', qr:'QR', 'qr-off':'QR دون اتصال', manual:'يدوي'}[p.method] || p.method, p.time]));
     (s.absentees || []).forEach(id => rows.push([id, nm(id), 'غائب', '', '']));
     download(`حضور_${s.course}_${s.date}.csv`, toCSV(rows), 'text/csv');
   }
@@ -735,7 +1070,7 @@ $('#ovLoadBtn').onclick = async () => {
     list.forEach(s => {
       const o = per[s.deptId] = per[s.deptId] || {collegeId:s.collegeId, deptId:s.deptId, name:s.deptName || deptName(s.deptId), lec:0, hours:0, P:0, A:0, face:0, sessions:[]};
       o.lec++; o.hours += +s.hours || 0; o.P += (s.present || []).length; o.A += (s.absentees || []).length;
-      o.face += (s.present || []).filter(p => p.method === 'face').length; o.sessions.push(s);
+      o.face += (s.present || []).filter(p => p.method !== 'manual').length; o.sessions.push(s);
     });
     ovRows = Object.values(per).map(o => {
       const over = new Set();
@@ -751,7 +1086,7 @@ $('#ovLoadBtn').onclick = async () => {
 };
 $('#ovExportBtn').onclick = () => {
   if (!ovRows.length) return toast('اعرض التقرير أولاً', 'err');
-  download(`تقرير_الحضور_${App.org.term}.csv`.replace(/[\/\s]+/g, '_'), toCSV([['الكلية','القسم','المحاضرات','الساعات','نسبة الحضور %','تسجيل بالوجه %','طلبة تجاوزوا 10%'],
+  download(`تقرير_الحضور_${App.org.term}.csv`.replace(/[\/\s]+/g, '_'), toCSV([['الكلية','القسم','المحاضرات','الساعات','نسبة الحضور %','تسجيل آلي (وجه/QR) %','طلبة تجاوزوا 10%'],
     ...ovRows.map(r => [r.college, r.dept, r.lec, r.hours, r.rate.toFixed(1), r.faceRate.toFixed(0), r.over])]), 'text/csv');
 };
 
@@ -783,16 +1118,58 @@ function renderUsers(){
   $('#usersBody').innerHTML = list.map(u => `<tr><td>${esc(u.name)}${u.id === me.uid ? ' <span class="badge b-gray">أنت</span>' : ''}</td>
     <td dir="ltr" style="text-align:right">${esc(u.email)}</td>
     <td><span class="badge ${u.role === 'disabled' ? 'b-abs' : 'b-face'}">${ROLES[normRole(u.role)] || u.role}</span></td>
-    <td>${esc(collegeName(u.collegeId))}</td><td>${(u.deptIds || []).map(d => esc(deptName(d))).join('، ')}</td>
+    <td>${esc(collegeName(u.collegeId))}</td><td>${(u.assignments || []).length
+      ? u.assignments.map(a => `<div>📘 ${esc(a.course)} <span class="note">— ${esc(deptName(a.deptId))} / ${esc(a.stage)} / ${esc(a.shift)} / ${esc(a.section || 'كل الشعب')}</span></div>`).join('')
+      : (u.deptIds || []).map(d => esc(deptName(d))).join('، ')}</td>
     <td>${canEditUser(u) ? `<button class="btn sm light" data-edit="${esc(u.id)}">تعديل</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="6" class="note">لا يوجد مستخدمون</td></tr>';
 }
-let umEditing = null;
+let umEditing = null, umAsg = [], umDeptsAllowed = [];
+function umAllowedDepts(){
+  const me = App.user;
+  return is('super') ? deptList() : is('dean') ? deptList().filter(d => d.collegeId === me.collegeId) : deptList().filter(d => (me.deptIds || []).includes(d.id));
+}
+function newAsg(deptId){
+  const d = (App.org.depts || {})[deptId] || {stages:[''], shifts:[''], sections:[]};
+  return {deptId, course:'', stage:d.stages[0], shift:d.shifts[0], section:''};
+}
+function renderAsg(){
+  const opt = (arr, v, all) => (all ? `<option value="" ${!v ? 'selected' : ''}>${all}</option>` : '') + (arr || []).map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('');
+  $('#umAsgBody').innerHTML = umAsg.map((a, i) => {
+    const d = (App.org.depts || {})[a.deptId] || {};
+    return `<tr data-i="${i}">
+      <td><select data-f="deptId">${umDeptsAllowed.map(x => `<option value="${esc(x.id)}" ${x.id === a.deptId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></td>
+      <td><input data-f="course" value="${esc(a.course)}" placeholder="اسم المادة" style="min-width:160px"></td>
+      <td><select data-f="stage">${opt(d.stages, a.stage)}</select></td>
+      <td><select data-f="shift">${opt(d.shifts, a.shift)}</select></td>
+      <td><select data-f="section">${opt(d.sections, a.section, 'كل الشعب')}</select></td>
+      <td><button class="btn sm red" data-rm="${i}" type="button">✕</button></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="note">اضغط "+ إضافة مادة"</td></tr>';
+}
+$('#umAsgBody').oninput = $('#umAsgBody').onchange = e => {
+  const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f; if (!tr || !f) return;
+  const a = umAsg[+tr.dataset.i]; a[f] = e.target.value;
+  if (f === 'deptId' && e.type === 'change'){ Object.assign(a, newAsg(a.deptId), {course:a.course}); renderAsg(); }
+};
+$('#umAsgBody').onclick = e => { const b = e.target.closest('button[data-rm]'); if (b){ umAsg.splice(+b.dataset.rm, 1); renderAsg(); } };
+$('#umAddAsg').onclick = () => {
+  const last = umAsg[umAsg.length - 1];
+  umAsg.push(last ? Object.assign({}, last, {course:''}) : newAsg((App.dept && umDeptsAllowed.some(d => d.id === App.dept.id)) ? App.dept.id : (umDeptsAllowed[0] || {}).id));
+  renderAsg(); const ins = $$('#umAsgBody input[data-f=course]'); if (ins.length) ins[ins.length - 1].focus();
+};
+$('#umGen').onclick = () => { $('#umPass').value = genPass(); };
+function umRoleUI(){
+  const r = $('#umRole').value;
+  $('#umAsgBox').classList.toggle('hidden', r !== 'instructor');
+  $('#umDeptBox').classList.toggle('hidden', !['head','registrar'].includes(r));
+  if (r === 'instructor' && !umAsg.length) $('#umAddAsg').onclick();
+}
+$('#umRole').onchange = umRoleUI;
 function openUserModal(u){
   umEditing = u || null;
   const me = App.user;
   $('#userModalTitle').textContent = u ? 'تعديل مستخدم: ' + u.name : 'إضافة مستخدم';
-  $('#umName').value = u ? u.name : ''; $('#umEmail').value = u ? u.email : ''; $('#umPass').value = '';
+  $('#umName').value = u ? u.name : ''; $('#umEmail').value = u ? u.email : ''; $('#umPass').value = u ? '' : genPass();
   $('#umName').disabled = $('#umEmail').disabled = !!u; $('#umPassBox').classList.toggle('hidden', !!u);
   $('#umRole').innerHTML = roleOptionsFor(!!u).map(r => `<option value="${r}">${ROLES[r]}</option>`).join('');
   $('#umRole').value = u ? normRole(u.role) : 'instructor';
@@ -800,12 +1177,15 @@ function openUserModal(u){
   $('#umCollege').innerHTML = cols.map(([id, c]) => `<option value="${esc(id)}">${esc(c.name)}</option>`).join('');
   $('#umCollege').value = u ? (u.collegeId || '') : (App.dept ? App.dept.collegeId : me.collegeId);
   $('#umCollege').disabled = !is('super');
-  let depts = is('super') ? deptList() : is('dean') ? deptList().filter(d => d.collegeId === me.collegeId) : deptList().filter(d => (me.deptIds || []).includes(d.id));
+  umDeptsAllowed = umAllowedDepts();
   const sel = new Set(u ? (u.deptIds || []) : (App.dept ? [App.dept.id] : []));
-  const byCol = {}; depts.forEach(d => (byCol[d.collegeId] = byCol[d.collegeId] || []).push(d));
+  const byCol = {}; umDeptsAllowed.forEach(d => (byCol[d.collegeId] = byCol[d.collegeId] || []).push(d));
   $('#umDepts').innerHTML = Object.entries(byCol).map(([c, ds]) => `<div class="grp">${esc(collegeName(c))}</div>` +
     ds.map(d => `<label><input type="checkbox" value="${esc(d.id)}" ${sel.has(d.id) ? 'checked' : ''}>${esc(d.name)}</label>`).join('')).join('')
     || '<span class="note">لا توجد أقسام</span>';
+  umAsg = u ? clone(u.assignments || []) : [];
+  renderAsg(); umRoleUI();
+  $('#umCred').classList.add('hidden'); $('#umSave').classList.remove('hidden'); $('#umCancel').textContent = 'إلغاء';
   $('#umNote').textContent = App.mode === 'local' ? 'وضع محلي: يُنشأ سجل المستخدم فقط دون حساب دخول.' : (u ? '' : 'يتطلب إنشاء الحساب اتصالاً بالإنترنت.');
   $('#userModal').classList.add('show');
 }
@@ -813,18 +1193,26 @@ $('#newUserBtn').onclick = () => openUserModal(null);
 $('#usersBody').onclick = e => { const b = e.target.closest('button[data-edit]'); if (b) openUserModal(App.users.find(u => u.id === b.dataset.edit)); };
 $('#umCancel').onclick = () => $('#userModal').classList.remove('show');
 $('#umSave').onclick = async () => {
-  const r = $('#umRole').value, collegeId = $('#umCollege').value;
-  const deptIds = $$('#umDepts input:checked').map(x => x.value);
-  if (['head','registrar','instructor'].includes(r) && !deptIds.length) return toast('اختر قسماً واحداً على الأقل', 'err');
+  const r = $('#umRole').value;
+  let collegeId = $('#umCollege').value, deptIds = $$('#umDepts input:checked').map(x => x.value), assignments = [];
+  if (r === 'instructor'){
+    assignments = umAsg.map(a => ({deptId:a.deptId, course:String(a.course || '').trim(), stage:a.stage, shift:a.shift, section:a.section || ''}));
+    if (!assignments.length) return toast('أضف مادة واحدة على الأقل للتدريسي', 'err');
+    if (assignments.some(a => !a.course || !a.deptId)) return toast('اكتب اسم كل مادة', 'err');
+    deptIds = [...new Set(assignments.map(a => a.deptId))];
+    if (!is('super')) collegeId = App.user.collegeId;
+    else { const d = (App.org.depts || {})[deptIds[0]]; if (d) collegeId = d.collegeId; }
+  } else if (['head','registrar'].includes(r) && !deptIds.length) return toast('اختر قسماً واحداً على الأقل', 'err');
+  if (!['head','registrar','instructor'].includes(r)) deptIds = deptIds.filter(() => false);
   if (r !== 'super' && !collegeId) return toast('اختر الكلية', 'err');
   $('#umSave').disabled = true;
   try{
     if (umEditing){
-      await DB.update('att_users', umEditing.id, {role:r, collegeId, deptIds, updatedAt:nowISO()}).p;
-      toast('تم التحديث', 'ok');
+      await DB.update('att_users', umEditing.id, {role:r, collegeId, deptIds, assignments, updatedAt:nowISO()}).p;
+      toast('تم التحديث', 'ok'); $('#userModal').classList.remove('show');
     } else {
-      const name = $('#umName').value.trim(), email = $('#umEmail').value.trim(), pass = $('#umPass').value;
-      if (!name || !email || pass.length < 6) throw {message:'أكمل الاسم والبريد وكلمة مرور من ٦ أحرف على الأقل'};
+      const name = $('#umName').value.trim(), email = $('#umEmail').value.trim().toLowerCase(), pass = $('#umPass').value;
+      if (!name || !emailOk(email) || pass.length < 6) throw {message:'أكمل الاسم والبريد الصحيح والرمز (٦ أحرف على الأقل)'};
       let uid;
       if (App.mode === 'local') uid = 'U' + Date.now();
       else {
@@ -833,10 +1221,18 @@ $('#umSave').onclick = async () => {
         const cred = await sec.auth().createUserWithEmailAndPassword(email, pass);
         uid = cred.user.uid; await sec.auth().signOut();
       }
-      await DB.set('att_users', uid, {name, email, role:r, collegeId, deptIds, createdAt:nowISO(), createdBy:App.user.uid}).p;
+      await DB.set('att_users', uid, {name, email, role:r, collegeId, deptIds, assignments, createdAt:nowISO(), createdBy:App.user.uid}).p;
+      const link = location.origin + location.pathname.replace(/index\.html$/, '');
+      const txt = `نظام حضور الطلبة — جامعة السراج\nالاسم: ${name}\nالصلاحية: ${ROLES[r]}\n` +
+        (assignments.length ? 'المواد: ' + assignments.map(a => `${a.course} (${deptName(a.deptId)} / ${a.stage} / ${a.shift} / ${a.section || 'كل الشعب'})`).join('، ') + '\n' : '') +
+        `البريد: ${email}\nالرمز: ${pass}\nالرابط: ${link}`;
+      $('#umCred').innerHTML = `<b>✓ تم إنشاء الحساب — سلّم هذه البيانات للمستخدم (الرمز لا يظهر مرة أخرى):</b>
+        <pre style="white-space:pre-wrap;font-family:inherit;margin:8px 0" id="umCredTxt">${esc(txt)}</pre>
+        <button class="btn sm" id="umCopy" type="button">📋 نسخ</button>`;
+      $('#umCred').classList.remove('hidden'); $('#umSave').classList.add('hidden'); $('#umCancel').textContent = 'إغلاق';
+      $('#umCopy').onclick = async () => { try{ await navigator.clipboard.writeText(txt); toast('نُسخ', 'ok'); }catch(e){ toast('انسخ النص يدوياً', 'err'); } };
       toast('تم إنشاء حساب ' + name, 'ok');
     }
-    $('#userModal').classList.remove('show');
   }catch(e){ toast('تعذّر الحفظ: ' + fbErr(e), 'err'); }
   $('#umSave').disabled = false;
 };
@@ -962,6 +1358,136 @@ $('#clearAllBtn').onclick = async () => {
   LFS.d = {}; LFS.persist(); location.reload();
 };
 
+/* =====================================================================
+   واجهة الطالب: تفعيل الحساب ومسح رمز الحضور
+   ===================================================================== */
+let student = null, registering = false, scanStream = null, scanOn = false, scanBusy = false;
+async function enterStudent(st){
+  student = st; showView('studentView');
+  $('#stName').textContent = st.name ? `${st.name} — ${st.sid}` : 'الرقم الجامعي: ' + st.sid;
+  let dn = st.deptId;
+  try{ const org = await FS.get('att_org', 'main'); if (org && org.depts && org.depts[st.deptId]) dn = org.depts[st.deptId].name; }catch(e){}
+  $('#stInfo').textContent = `${dn} — ${st.stage} / ${st.shift} — ${st.email || ''}`;
+  stConn(); $('#stResult').innerHTML = ''; renderQueue(); flushQueue();
+  const pend = sessionStorage.getItem('fa_pending');
+  if (pend){ sessionStorage.removeItem('fa_pending'); submitFromText(pend); }
+  else startScan(); // تفتح الكاميرا مباشرة بعد الدخول
+}
+function stConn(){ const el = $('#stConn'); el.textContent = navigator.onLine ? 'متصل ✓' : 'غير متصل'; el.className = 'pill ' + (navigator.onLine ? 'ok' : 'err'); }
+window.addEventListener('online', stConn); window.addEventListener('offline', stConn);
+$('#stLogout').onclick = () => { stopScan(); auth.signOut(); };
+function stResult(msg, cls){ $('#stResult').innerHTML = `<div class="result ${cls}">${esc(msg)}</div>`; }
+function parseQR(text){
+  let a = text;
+  try{ const u = new URL(text); a = u.searchParams.get('a') || ''; }catch(e){}
+  const m = /^([A-Za-z0-9_-]{6,})\.(\d+)\.(\d{6})$/.exec(a || '');
+  return m ? {liveId:m[1], slot:+m[2], code:m[3]} : null;
+}
+function submitFromText(text){
+  const q = parseQR(text);
+  if (!q) return stResult('هذا ليس رمز حضور صالحاً', 'err');
+  submitCheckin(q.liveId, q.slot, q.code);
+}
+// قائمة انتظار على الهاتف: يُحفظ الحضور أولاً ثم يُرفع (فوراً، أو عند توفر الإنترنت)
+const QKEY = 'fa_qr_queue';
+const qGet = () => LS.get(QKEY, []);
+const qSet = q => LS.set(QKEY, q);
+async function submitCheckin(liveId, slot, code){
+  if (!student) return;
+  const uid = auth.currentUser.uid;
+  const item = {liveId, slot, code, uid, sid:student.sid, capturedAt:Date.now(), savedAt:Date.now()};
+  qSet(qGet().filter(x => !(x.liveId === liveId && x.uid === uid)).concat([item]));
+  if (navigator.vibrate) navigator.vibrate(120);
+  if (!navigator.onLine){
+    stResult('📥 حُفظ حضورك على هاتفك (لا يوجد إنترنت). سيُرفع تلقائياً عند الاتصال — افتح التطبيق حينها.', 'info');
+    renderQueue(); return;
+  }
+  stResult('جارٍ إرسال الحضور...', 'info');
+  await flushQueue(item);
+}
+async function sendItem(it){
+  const w = DB.set(`att_live/${it.liveId}/c`, it.uid, {sid:it.sid, slot:it.slot, code:it.code, deviceId, capturedAt:it.capturedAt, at:TS});
+  await Promise.race([w.p, new Promise((_, rej) => setTimeout(() => rej({code:'timeout'}), 12000))]);
+}
+let flushing = false;
+async function flushQueue(current){
+  if (flushing || !student || !navigator.onLine || !auth || !auth.currentUser) return;
+  flushing = true;
+  const uid = auth.currentUser.uid;
+  for (const it of qGet().filter(x => x.uid === uid)){
+    let done = false, msg = null, cls = 'ok';
+    try{ await sendItem(it); done = true; msg = it.capturedAt < Date.now() - 60000
+      ? '✓ رُفع حضورك المحفوظ على الهاتف، وسيُضاف إلى المحاضرة تلقائياً.' : '✓ أُرسل حضورك. تأكد من ظهور اسمك على شاشة التدريسي.'; }
+    catch(e){
+      console.warn(e);
+      const old = Date.now() - it.savedAt > QR_ACCEPT_DAYS * 86400000;
+      if (e.code === 'permission-denied' && old){ done = true; msg = 'لم يُقبل حضور قديم محفوظ على الهاتف (انتهت المهلة).'; cls = 'err'; }
+      else { msg = e.code === 'permission-denied' ? '📥 محفوظ على هاتفك — سيُعاد الإرسال تلقائياً (المحاضرة لم تُرفع بعد من جهاز التدريسي).'
+                 : '📥 محفوظ على هاتفك — الإنترنت ضعيف، سيُعاد الإرسال تلقائياً.'; cls = 'info'; }
+    }
+    if (done) qSet(qGet().filter(x => !(x.liveId === it.liveId && x.uid === it.uid)));
+    if ((current && it.liveId === current.liveId) || (!current && done)) stResult(msg, cls);
+  }
+  flushing = false; renderQueue();
+}
+function renderQueue(){
+  const n = student && auth && auth.currentUser ? qGet().filter(x => x.uid === auth.currentUser.uid).length : 0;
+  let el = $('#stQueue');
+  if (!el){ el = document.createElement('div'); el.id = 'stQueue'; el.className = 'note'; el.style.textAlign = 'center'; $('#stResult').after(el); }
+  el.textContent = n ? `📥 ${n} حضور محفوظ على الهاتف بانتظار الرفع` : '';
+}
+window.addEventListener('online', () => { stConn(); flushQueue(); });
+setInterval(() => { if (student) flushQueue(); }, 30000);
+$('#mSend').onclick = async () => {
+  const pin = $('#mPin').value.trim(), code = $('#mCode').value.trim();
+  if (!/^\d{6}$/.test(pin) || !/^\d{6}$/.test(code)) return stResult('اكتب رقم المحاضرة والرمز (٦ أرقام لكل منهما)', 'err');
+  if (!navigator.onLine) return stResult('الإدخال اليدوي يحتاج إنترنت — دون اتصال امسح رمز QR بالكاميرا', 'err');
+  try{
+    const list = await FS.query('att_live', [['pin', pin], ['open', true]]);
+    if (!list.length) return stResult('لا توجد محاضرة مفتوحة بهذا الرقم', 'err');
+    submitCheckin(list[0].id, Math.floor(Date.now() / SLOT_MS), code);
+  }catch(e){ stResult('تعذّر البحث عن المحاضرة: ' + fbErr(e), 'err'); }
+};
+$('#scanBtn').onclick = () => startScan();
+async function startScan(){
+  if (scanOn) return;
+  $('#scanBtn').classList.add('hidden');
+  try{
+    scanStream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'}}});
+    const v = $('#scanVideo'); v.srcObject = scanStream; await v.play();
+    $('#scanArea').classList.remove('hidden'); scanOn = true; $('#stResult').innerHTML = ''; scanLoop();
+  }catch(e){ $('#scanBtn').classList.remove('hidden'); stResult('تعذّر تشغيل الكاميرا — اضغط "مسح رمز الحضور" واسمح للمتصفح باستخدامها، أو أدخل الرمز يدوياً', 'err'); }
+}
+function stopScan(){
+  scanOn = false; if (scanStream){ scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
+  const v = $('#scanVideo'); if (v) v.srcObject = null; $('#scanArea') && $('#scanArea').classList.add('hidden');
+  $('#scanBtn') && $('#scanBtn').classList.remove('hidden');
+}
+$('#scanStop').onclick = stopScan;
+let barcodeDetector = null;
+try{ if ('BarcodeDetector' in window) barcodeDetector = new BarcodeDetector({formats:['qr_code']}); }catch(e){ barcodeDetector = null; }
+const scanCanvas = document.createElement('canvas');
+async function scanLoop(){
+  if (!scanOn) return;
+  const v = $('#scanVideo'); let text = null;
+  if (v.readyState >= 2 && !scanBusy){
+    scanBusy = true;
+    try{
+      if (barcodeDetector){ const r = await barcodeDetector.detect(v); if (r.length) text = r[0].rawValue; }
+      else if (typeof jsQR !== 'undefined'){
+        const w = v.videoWidth, h = v.videoHeight, sc = Math.min(1, 640 / Math.max(w, h));
+        scanCanvas.width = Math.round(w * sc); scanCanvas.height = Math.round(h * sc);
+        const ctx = scanCanvas.getContext('2d', {willReadFrequently:true}); ctx.drawImage(v, 0, 0, scanCanvas.width, scanCanvas.height);
+        const img = ctx.getImageData(0, 0, scanCanvas.width, scanCanvas.height), r = jsQR(img.data, img.width, img.height);
+        if (r) text = r.data;
+      } else { stopScan(); return stResult('ماسح QR غير متاح على هذا المتصفح — امسح الرمز بكاميرا الهاتف أو أدخله يدوياً', 'err'); }
+    }catch(e){ console.error(e); }
+    scanBusy = false;
+  }
+  if (text && parseQR(text)){ stopScan(); return submitFromText(text); }
+  setTimeout(scanLoop, 200);
+}
+
 /* ============ تسجيل الدخول والتشغيل ============ */
 $('#loginForm').onsubmit = async e => {
   e.preventDefault(); $('#loginErr').textContent = ''; $('#loginBtn').disabled = true;
@@ -981,10 +1507,13 @@ $('#logoutBtn').onclick = async () => {
 };
 function startSession(user){
   App.user = user; App.dept = null; App.org = null; App.term = null;
+  if (!modelsReady && !modelsLoading) loadModels(); // نماذج الوجه للكادر فقط (لا تُنزَّل على هواتف الطلبة)
   showApp(); applyRole(); subOrg(); subUsers();
 }
 async function boot(){
-  loadSettingsUI(); registerSW(); loadModels();
+  const a = new URLSearchParams(location.search).get('a');
+  if (a){ sessionStorage.setItem('fa_pending', a); history.replaceState(null, '', location.pathname); }
+  loadSettingsUI(); registerSW();
   const cfg = window.FIREBASE_CONFIG || {};
   if (!cfg.apiKey){
     App.mode = 'local'; DB = LFS; LFS.load();
@@ -998,15 +1527,21 @@ async function boot(){
   catch(e){ console.warn('persistence', e); if (e.code === 'unimplemented') toast('هذا المتصفح لا يدعم العمل دون اتصال', 'err'); }
   auth = firebase.auth(); App.mode = 'firebase'; DB = FS;
   auth.onAuthStateChanged(async u => {
-    unsubAll(); App.user = null;
+    if (registering) return;
+    unsubAll(); App.user = null; student = null; stopScan();
     if (!u){ showLogin(); return; }
     try{
       const d = await FS.get('att_users', u.uid);
       const r = d ? normRole(d.role) : null;
+      if (!d){
+        const st = await FS.get('att_stu', u.uid);
+        if (st) return enterStudent(Object.assign({uid:u.uid, email:u.email}, st));
+      }
       if (!r || !ACTIVE_ROLES.includes(r)){
         $('#loginErr').textContent = 'هذا الحساب غير مخوّل باستخدام النظام. راجع رئيس القسم أو مدير النظام.';
         await auth.signOut(); return;
       }
+      sessionStorage.removeItem('fa_pending');
       startSession(Object.assign({}, d, {uid:u.uid, email:u.email, role:r, deptIds:d.deptIds || []}));
     }catch(e){
       console.error(e);
