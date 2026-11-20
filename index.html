@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="4.0.0">
+<meta name="app-version" content="4.1.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -115,6 +115,10 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .sf{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid var(--line);cursor:zoom-in;transform:scaleX(-1)}
 .spot{display:flex;gap:12px;align-items:center;justify-content:space-between;background:#f0f4f8;border-radius:12px;padding:10px 14px;font-size:20px;font-weight:700}
 .spot img{width:64px;height:64px;border-radius:50%;object-fit:cover;transform:scaleX(-1)}
+.steps-guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:10px}
+.steps-guide div{background:#eef6f3;border:1px solid #cfe5dc;border-radius:10px;padding:8px 10px;font-size:14px;color:#1c2733}
+.steps-guide div b:first-child{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#0f766e;color:#fff;margin-left:6px}
+img.sf{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid #cfe5dc}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
 </style>
 <style>
@@ -187,6 +191,17 @@ html,body{overflow-x:hidden}
 </header>
 <div class="stu-wrap">
   <div class="card"><h2 id="stName" style="margin-bottom:4px"></h2><div class="note" id="stInfo"></div></div>
+  <div class="card hidden" id="selfEnrollCard">
+    <h2>👤 تسجيل بصمة وجهك (مرة واحدة)</h2>
+    <p class="note">ستُلتقط ٥ صور لوجهك بإرشاد التطبيق: مستقيم، ثم يمين، ثم يسار. اجلس في مكان مضاء جيداً، وأزل النظارة الشمسية أو الكمامة. تُستخدم البصمة للتحقق من حضورك فقط، ولا تُحفظ الصور.</p>
+    <label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:8px 0"><input type="checkbox" id="seConsent" style="width:auto"> أوافق على استخدام بصمة وجهي لأغراض تسجيل الحضور في الجامعة</label>
+    <div class="scan-box hidden" id="seCam" style="aspect-ratio:3/4"><video id="seVideo" playsinline muted autoplay style="transform:scaleX(-1)"></video></div>
+    <div id="seMsg" class="result info" style="font-size:18px">اضغط "ابدأ التسجيل"</div>
+    <div class="qr-bar" style="max-width:none"><div id="seBar" style="width:0%"></div></div>
+    <div class="thumbs" id="seThumbs" style="justify-content:center"></div>
+    <button class="btn big-btn green" id="seStart" style="margin-top:10px">📸 ابدأ التسجيل</button>
+    <button class="btn light sm" id="seLater" style="margin-top:8px">لاحقاً — أريد مسح رمز الحضور الآن</button>
+  </div>
   <div class="card" id="faceStep">
     <div id="faceState" class="result info" style="margin-top:0">📸 التحقق من الوجه</div>
     <button class="btn big-btn green hidden" id="faceBtn" style="margin-top:10px">📸 التقط سيلفي للتحقق من وجهك</button>
@@ -307,9 +322,13 @@ html,body{overflow-x:hidden}
       <div class="row">
         <select id="fStage" style="width:auto"></select>
         <select id="fShift" style="width:auto"></select>
-        <select id="fPrint" style="width:auto"><option value="">كل الحالات</option><option value="yes">لديه بصمة</option><option value="no">بدون بصمة</option></select>
+        <select id="fPrint" style="width:auto"><option value="">كل الحالات</option><option value="yes">لديه بصمة</option><option value="no">بدون بصمة</option><option value="self">سجّلها الطالب بنفسه</option><option value="dup">⚠ بصمات متشابهة</option></select>
         <input id="fSearch" placeholder="بحث بالاسم أو الرقم" style="width:190px">
       </div>
+    </div>
+    <div class="steps-guide" id="regGuide">
+      <div><b>١</b> نزّل <b>قالب Excel</b> للقسم</div><div><b>٢</b> املأه بأسماء الطلبة وأرقامهم</div>
+      <div><b>٣</b> <b>استورده</b> ← تُنشأ حسابات الجميع</div><div><b>٤</b> وزّع ملف الحسابات؛ يسجّل كل طالب <b>بصمة وجهه بنفسه</b></div>
     </div>
     <div class="row" style="margin-bottom:10px">
       <button class="btn green sm" id="importBtn">📥 استيراد الطلبة من Excel وإنشاء حساباتهم</button>
@@ -713,8 +732,9 @@ html,body{overflow-x:hidden}
   <div class="modal" style="width:min(980px,100%)">
     <h3>استيراد الطلبة من Excel وإنشاء حساباتهم — <span class="deptName"></span></h3>
     <div id="impStep1">
-      <p class="note">أعمدة الملف (الصف الأول عناوين): <b>الرقم الجامعي</b> | <b>الاسم</b> | <b>البريد الإلكتروني</b> | المرحلة | الدراسة | الشعبة. الأعمدة الثلاثة الأخيرة اختيارية، فإن تُركت فارغة تؤخذ القيم المختارة هنا:</p>
+      <p class="note">استخدم <b>قالب Excel</b> من زر "⬇ تنزيل قالب Excel". الأعمدة: <b>الرقم الجامعي</b> | <b>الاسم</b> | البريد (اختياري) | المرحلة | الدراسة | الشعبة. إن تُركت المرحلة أو الدراسة أو الشعبة فارغة تؤخذ القيم المختارة هنا:</p>
       <div class="grid">
+        <div><label>نطاق البريد التلقائي (لمن لا بريد له)</label><input id="impDomain" dir="ltr" placeholder="stu.alsiraj.edu.iq"></div>
         <div><label>المرحلة</label><select id="impStage" class="optStage"></select></div>
         <div><label>الدراسة</label><select id="impShift" class="optShift"></select></div>
         <div><label>الشعبة</label><select id="impSection" class="optSection"></select></div>
@@ -752,6 +772,6 @@ html,body{overflow-x:hidden}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=4.0.0"></script>
+<script src="app.js?v=4.1.0"></script>
 </body>
 </html>

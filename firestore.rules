@@ -50,9 +50,18 @@ service cloud.firestore {
     match /att_packs/{id} {
       allow read: if resource == null || canSeeDept(resource.data.collegeId, resource.data.deptId);
       allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
-      allow update: if canManageDept(resource.data.collegeId, resource.data.deptId)
+      allow update: if (canManageDept(resource.data.collegeId, resource.data.deptId)
         && request.resource.data.deptId == resource.data.deptId
-        && request.resource.data.collegeId == resource.data.collegeId;
+        && request.resource.data.collegeId == resource.data.collegeId)
+        // الطالب يسجّل بصمة وجهه بنفسه مرة واحدة: يغيّر سجله فقط وحقول البصمة فقط، وبشرط ألا تكون له بصمة سابقة
+        || (signedIn() && exists(/databases/$(database)/documents/att_stu/$(request.auth.uid))
+          && resource.data.deptId == myStu().deptId && resource.data.stage == myStu().stage && resource.data.shift == myStu().shift
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['students'])
+          && request.resource.data.students.diff(resource.data.students).affectedKeys().hasOnly([myStu().sid])
+          && resource.data.students[myStu().sid].get('u', '') == request.auth.uid
+          && request.resource.data.students[myStu().sid].diff(resource.data.students[myStu().sid]).affectedKeys().hasOnly(['p', 'c', 'self', 'th'])
+          && resource.data.students[myStu().sid].get('p', []).size() == 0
+          && request.resource.data.students[myStu().sid].p.size() <= 6);
       allow delete: if isSuper();
     }
 
@@ -150,7 +159,13 @@ service cloud.firestore {
           && getAfter(/databases/$(database)/documents/att_devices/$(request.resource.data.boundDevice)).data.uid == request.auth.uid
           && (!('boundAt' in resource.data)
               || request.time < resource.data.boundAt + duration.value(30, 'm')
-              || request.time > resource.data.boundAt + duration.value(7, 'd')));
+              || request.time > resource.data.boundAt + duration.value(7, 'd')))
+        // تسجيل بصمة الوجه ذاتياً (مرة واحدة؛ لإعادتها يحذفها القسم أولاً)
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['p', 'pAt', 'pSelf', 'pThumb'])
+          && resource.data.get('p', []).size() == 0
+          && request.resource.data.p.size() <= 6
+          && request.resource.data.pAt == request.time);
       allow delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
     }
 

@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.1.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -88,7 +88,7 @@ const toCSV = rows => '﻿' + rows.map(r => r.map(v => '"' + String(v ?? '').rep
 const hhmm = () => new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'});
 const today = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0,10); };
 const nowISO = () => new Date().toISOString();
-const cleanId = s => String(s ?? '').trim().replace(/[^\w-]/g, '-');
+const cleanId = s => String(s ?? '').trim().replace(/[٠-٩]/g, c => c.charCodeAt(0) - 1632).replace(/[۰-۹]/g, c => c.charCodeAt(0) - 1776).replace(/[^\w-]/g, '-');
 const slugOk = s => /^[a-z0-9][a-z0-9-]{1,30}$/.test(s);
 const splitList = s => String(s || '').split(/[,،]/).map(x => x.trim()).filter(Boolean);
 const strip = o => { const {_pending, ...x} = o; return x; };
@@ -479,7 +479,7 @@ function beep(){
 function deptStudents(){
   const out = [];
   Object.values(App.packs).forEach(p => Object.entries(p.students || {}).forEach(([sid, s]) =>
-    out.push({id:sid, name:s.n, section:s.s, stage:p.stage, shift:p.shift, prints:s.p || [], e:s.e || '', u:s.u || '', packId:p.id})));
+    out.push({id:sid, name:s.n, section:s.s, stage:p.stage, shift:p.shift, prints:s.p || [], e:s.e || '', u:s.u || '', self:!!s.self, th:s.th || '', packId:p.id})));
   return out.sort((a, b) => a.id.localeCompare(b.id, 'en', {numeric:true}));
 }
 function addStudents(rows){
@@ -520,10 +520,26 @@ $('#bulkAddBtn').onclick = () => {
   if (r.added && !r.bad) $('#bulkText').value = '';
 };
 ['#fStage','#fShift','#fPrint','#fSearch'].forEach(s => $(s).oninput = renderStudents);
+// كشف البصمات المتشابهة داخل القسم (طالب سجّل وجه زميله في حسابه مثلاً) — يقارن متوسط بصمة كل طالب
+const DUP_MAX = 0.42;
+let dupCache = {key:'', map:{}};
+function dupMap(all){
+  const withP = all.filter(s => s.prints.length), key = withP.map(s => s.id + ':' + s.prints[0].slice(0, 12)).join('|');
+  if (dupCache.key === key) return dupCache.map;
+  const means = withP.map(s => { const ds = s.prints.map(decDesc), m = new Float32Array(128); ds.forEach(d => { for (let i = 0; i < 128; i++) m[i] += d[i] / ds.length; }); return m; });
+  const map = {};
+  for (let i = 0; i < withP.length; i++) for (let j = i + 1; j < withP.length; j++){
+    let d = 0; const a = means[i], b = means[j]; for (let k = 0; k < 128; k++){ const x = a[k] - b[k]; d += x * x; } d = Math.sqrt(d);
+    if (d < DUP_MAX){ (map[withP[i].id] = map[withP[i].id] || []).push(withP[j]); (map[withP[j].id] = map[withP[j].id] || []).push(withP[i]); }
+  }
+  dupCache = {key, map}; return map;
+}
 function filteredStudents(){
   const st = $('#fStage').value, sh = $('#fShift').value, fp = $('#fPrint').value, q = $('#fSearch').value.trim();
-  return deptStudents().filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
-    (!fp || (fp === 'yes') === (s.prints.length > 0)) && (!q || s.name.includes(q) || s.id.includes(q)));
+  const all = deptStudents(), dups = fp === 'dup' ? dupMap(all) : null;
+  return all.filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
+    (!fp || (fp === 'yes' && s.prints.length > 0) || (fp === 'no' && !s.prints.length) || (fp === 'self' && s.self && s.prints.length) || (fp === 'dup' && dups[s.id])) &&
+    (!q || s.name.includes(q) || s.id.includes(q)));
 }
 function accountCell(s, key){
   if (s.u) return `<span class="badge b-face">مفعّل</span> <span class="note" dir="ltr">${esc(s.e)}</span> <button class="btn sm light" data-reset="${key}" title="يُرسل رابط تغيير كلمة المرور إلى بريد الطالب">🔑 رابط كلمة مرور</button> <button class="btn sm light" data-unbind="${key}" title="عند تغيير الطالب هاتفه">📱 فك ربط الهاتف</button>`;
@@ -532,13 +548,14 @@ function accountCell(s, key){
 }
 function renderStudents(){
   if (!canManageStudents()) return;
-  const all = deptStudents(), list = filteredStudents();
+  const all = deptStudents(), list = filteredStudents(), dups = dupMap(all), nd = Object.keys(dups).length;
   $('#studCount').textContent = `${all.length} طالب — ${all.filter(s => s.prints.length).length} لديهم بصمة` +
-    ` — ${all.filter(s => s.u).length} لديهم حساب`;
+    ` — ${all.filter(s => s.u).length} لديهم حساب` + (nd ? ` — ⚠ ${nd} ببصمة متشابهة` : '');
   $('#studentsBody').innerHTML = list.slice(0, 800).map(s => {
     const n = s.prints.length, key = esc(s.packId + '|' + s.id);
     return `<tr><td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.stage)}</td><td>${esc(s.shift)}</td><td>${esc(s.section)}</td>
-    <td>${n ? `<span class="badge b-face">مسجّلة (${n})</span>` : '<span class="badge b-abs">غير مسجّلة</span>'}</td>
+    <td>${s.th ? `<img class="sf" src="${esc(s.th)}" data-zoom="1" alt=""> ` : ''}${n ? `<span class="badge b-face">مسجّلة (${n})</span>` : '<span class="badge b-abs">غير مسجّلة</span>'}${n && s.self ? ' <span class="badge b-qr" title="سجّلها الطالب من هاتفه">ذاتية</span>' : ''}
+      ${dups[s.id] ? `<div><span class="badge b-dep" title="قد يكون وجه الشخص نفسه">⚠ تشبه: ${dups[s.id].map(x => esc(x.name)).join('، ')}</span></div>` : ''}</td>
     <td>${accountCell(s, key)}</td>
     <td class="row"><button class="btn sm" data-enroll="${key}">${n ? 'إعادة البصمة' : 'تسجيل البصمة'}</button>
     ${n ? `<button class="btn sm light" data-clear="${key}">حذف البصمة</button>` : ''}
@@ -552,14 +569,36 @@ const genPass = () => { const c = 'abcdefghjkmnpqrstuvwxyz23456789'; return Arra
 const emailOk = e => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);
 let imp = null; // {rows:[{id,name,email,stage,shift,section,pass,status,ok}], running}
 function needXLSX(){ if (typeof XLSX === 'undefined'){ toast('مكتبة Excel غير محمّلة — افتح التطبيق مع إنترنت', 'err'); return false; } return true; }
+// قالب Excel يملؤه رئيس القسم أو موظف التسجيل: ورقة للبيانات + ورقة تعليمات + ورقة بالقيم المسموحة للقسم
+const stuDomain = () => (localStorage.getItem('att_stuDomain') || 'stu.alsiraj.edu.iq').replace(/^@/, '').trim();
 $('#templateBtn').onclick = () => {
   if (!needXLSX()) return;
-  const d = App.dept || {stages:['الأولى'], shifts:['صباحي'], sections:['A']};
-  const ws = XLSX.utils.aoa_to_sheet([['الرقم الجامعي','الاسم','البريد الإلكتروني','المرحلة','الدراسة','الشعبة'],
-    ['2025001','أحمد محمد علي حسن','ahmed@example.com', d.stages[0], d.shifts[0], (d.sections || [''])[0]]]);
-  ws['!cols'] = [{wch:14},{wch:30},{wch:30},{wch:10},{wch:10},{wch:8}];
-  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'الطلبة');
-  XLSX.writeFile(wb, 'قالب_الطلبة.xlsx');
+  if (!App.dept) return toast('اختر القسم أولاً', 'err');
+  const d = App.dept, secs = d.sections || [], st = $('#fStage').value || d.stages[0], sh = $('#fShift').value || d.shifts[0];
+  const data = [['الرقم الجامعي','الاسم الرباعي','البريد الإلكتروني (اختياري)','المرحلة','الدراسة','الشعبة']];
+  for (let i = 0; i < 60; i++) data.push(['', '', '', st, sh, secs[0] || '']); // صفوف جاهزة بقيم القسم الافتراضية
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  for (let r = 2; r <= 61; r++){ const c = ws['A' + r] = ws['A' + r] || {t:'s', v:''}; c.t = 's'; c.z = '@'; } // الرقم الجامعي نصاً كي لا تضيع الأصفار
+  ws['!cols'] = [{wch:16},{wch:34},{wch:32},{wch:12},{wch:10},{wch:8}];
+  const help = XLSX.utils.aoa_to_sheet([
+    ['تعليمات تعبئة قالب الطلبة — ' + d.name],
+    [],
+    ['1', 'املأ ورقة "الطلبة": طالب واحد في كل صف. لا تغيّر عناوين الأعمدة ولا ترتيبها.'],
+    ['2', 'الرقم الجامعي والاسم إلزاميان. الرقم الجامعي يجب ألا يتكرر.'],
+    ['3', `البريد الإلكتروني اختياري: إن تُرك فارغاً يُنشأ تلقائياً بالشكل (الرقم الجامعي@${stuDomain()}) ويكون اسم دخول الطالب.`],
+    ['4', 'المرحلة والدراسة والشعبة: اكتبها كما في ورقة "القيم المسموحة" تماماً. الصفوف مُعبّأة مسبقاً بقيم افتراضية يمكنك تغييرها.'],
+    ['5', 'الصفوف التي لا تحوي رقماً ولا اسماً تُتجاهل تلقائياً.'],
+    ['6', 'احفظ الملف، ثم من النظام: تبويب الطلبة ← "استيراد الطلبة من Excel" ← اختر الملف ← "إنشاء الحسابات".'],
+    ['7', 'بعد الإنشاء نزّل ملف حسابات الطلبة (فيه كلمات المرور) ووزّعه. يدخل كل طالب ويسجّل بصمة وجهه بنفسه من هاتفه.'],
+    [],
+    ['مثال', '2025001 | أحمد محمد علي حسن | (فارغ) | ' + [st, sh, secs[0] || ''].join(' | ')]]);
+  help['!cols'] = [{wch:6},{wch:110}];
+  const n = Math.max(d.stages.length, d.shifts.length, secs.length);
+  const allowed = XLSX.utils.aoa_to_sheet([['المرحلة','الدراسة','الشعبة'], ...Array.from({length:n}, (_, i) => [d.stages[i] || '', d.shifts[i] || '', secs[i] || ''])]);
+  allowed['!cols'] = [{wch:14},{wch:12},{wch:10}];
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]};
+  XLSX.utils.book_append_sheet(wb, ws, 'الطلبة'); XLSX.utils.book_append_sheet(wb, help, 'التعليمات'); XLSX.utils.book_append_sheet(wb, allowed, 'القيم المسموحة');
+  XLSX.writeFile(wb, `قالب_طلبة_${d.name}.xlsx`);
 };
 $('#syncPrintsBtn').onclick = async () => {
   const list = deptStudents().filter(s => s.u && s.prints.length);
@@ -578,7 +617,7 @@ $('#exportStudentsBtn').onclick = () => {
 function openImport(rows){
   if (!App.dept) return toast('اختر القسم أولاً', 'err');
   imp = {rows:rows || [], running:false, done:false};
-  $('#impStep1').classList.toggle('hidden', !!rows); $('#impFile').value = '';
+  $('#impStep1').classList.toggle('hidden', !!rows); $('#impFile').value = ''; $('#impDomain').value = stuDomain();
   $('#impExport').classList.add('hidden'); $('#impProgress').classList.add('hidden');
   fillDeptOptions(); renderImport(); $('#importModal').classList.add('show');
 }
@@ -596,14 +635,19 @@ $('#impFile').onchange = async e => {
     const aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], {header:1, defval:'', raw:false});
     if (!aoa.length) throw 0;
     const head = aoa[0].map(h => String(h).trim().toLowerCase());
-    const col = k => head.findIndex(h => HDR[k].some(x => h === x.toLowerCase()));
+    const col = k => { let i = head.findIndex(h => HDR[k].some(x => h === x.toLowerCase())); if (i < 0) i = head.findIndex(h => HDR[k].some(x => h.startsWith(x.toLowerCase() + ' '))); return i; };
     const ix = {id:col('id'), name:col('name'), email:col('email'), stage:col('stage'), shift:col('shift'), section:col('section')};
     let body = aoa.slice(1);
     if (ix.name < 0){ ix.id = 0; ix.name = 1; ix.email = 2; ix.stage = 3; ix.shift = 4; ix.section = 5; body = head.some(h => emailOk(h)) ? aoa : aoa.slice(1); }
     const v = (r, k) => ix[k] >= 0 ? String(r[ix[k]] ?? '').trim() : '';
-    imp.rows = body.filter(r => r.some(x => String(x).trim())).map(r => ({
-      id:cleanId(v(r, 'id')), name:v(r, 'name'), email:v(r, 'email').toLowerCase(),
-      stage:v(r, 'stage') || $('#impStage').value, shift:v(r, 'shift') || $('#impShift').value, section:v(r, 'section') || $('#impSection').value}));
+    const d = App.dept, norm = x => String(x).replace(/[أإآ]/g, 'ا').replace(/ة$/, 'ه').replace(/ى$/, 'ي').replace(/\s+/g, '').toLowerCase();
+    const pick = (val, list) => (list || []).find(x => norm(x) === norm(val)) || val; // "الاولى" = "الأولى"
+    const dom = ($('#impDomain').value.trim() || stuDomain()).replace(/^@/, ''); localStorage.setItem('att_stuDomain', dom);
+    imp.rows = body.filter(r => v(r, 'id') || v(r, 'name')).map(r => {
+      const id = cleanId(v(r, 'id')), em = v(r, 'email').toLowerCase();
+      return {id, name:v(r, 'name').replace(/\s+/g, ' '), email:em || (id ? `${id.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${dom}` : ''), autoEmail:!em,
+        stage:pick(v(r, 'stage') || $('#impStage').value, d.stages), shift:pick(v(r, 'shift') || $('#impShift').value, d.shifts), section:pick(v(r, 'section') || $('#impSection').value, d.sections)};
+    });
     validateImport(); renderImport();
   }catch(err){ console.error(err); toast('تعذّرت قراءة الملف — تأكد أنه ملف Excel بالأعمدة المطلوبة', 'err'); }
 };
@@ -614,7 +658,7 @@ function validateImport(){
     r.ok = false; r.status = '';
     if (!r.id) r.status = 'الرقم الجامعي فارغ';
     else if (!r.name) r.status = 'الاسم فارغ';
-    else if (!emailOk(r.email)) r.status = 'البريد غير صالح';
+    else if (!emailOk(r.email)) r.status = r.autoEmail ? 'الرقم الجامعي يجب أن يكون أرقاماً/حروفاً لاتينية لإنشاء البريد' : 'البريد غير صالح';
     else if (!d.stages.includes(r.stage) || !d.shifts.includes(r.shift) || ((d.sections || []).length && !d.sections.includes(r.section))) r.status = 'مرحلة/دراسة/شعبة غير معرّفة للقسم';
     else if (seenId[r.id]) r.status = 'رقم مكرر في الملف';
     else if (seenEmail[r.email] && seenEmail[r.email] !== r.id) r.status = 'البريد مستخدم لطالب آخر';
@@ -630,7 +674,7 @@ function renderImport(){
   if (!imp) return;
   const ok = imp.rows.filter(r => r.ok).length, created = imp.rows.filter(r => r.created).length;
   $('#impSummary').textContent = imp.rows.length ? `${imp.rows.length} صف — ${ok} جاهز` + (created ? ` — ${created} حساب أُنشئ` : '') : 'اختر ملف Excel';
-  $('#impBody').innerHTML = imp.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td dir="ltr" style="text-align:right">${esc(r.email)}</td>
+  $('#impBody').innerHTML = imp.rows.map((r, i) => `<tr><td>${i + 1}</td><td>${esc(r.id)}</td><td>${esc(r.name)}</td><td dir="ltr" style="text-align:right">${esc(r.email)}${r.autoEmail ? ' <small class="note">(تلقائي)</small>' : ''}</td>
     <td>${esc(r.stage)} / ${esc(r.shift)} / ${esc(r.section)}</td><td dir="ltr" style="font-family:monospace">${r.created ? esc(r.pass) : ''}</td>
     <td><span class="badge ${r.created ? 'b-face' : r.ok ? 'b-gray' : 'b-abs'}">${esc(r.status)}</span></td></tr>`).join('');
   $('#impRun').disabled = imp.running || imp.done || !ok;
@@ -672,13 +716,14 @@ $('#impRun').onclick = async () => {
   imp.running = false; imp.done = !stopped; $('#impProgress').textContent = stopped ? 'توقف' : 'انتهى';
   if (stopped){ imp.done = false; toast('أوقف Firebase الإنشاء مؤقتاً (حد ١٠٠ حساب في الساعة من نفس الشبكة). نزّل الملف الآن، ثم أكمل لاحقاً أو ارفع الحد من لوحة Firebase.', 'err'); }
   renderImport();
-  if (imp.rows.some(r => r.created)) toast('نزّل ملف Excel الآن — كلمات المرور لن تظهر مرة أخرى', 'ok');
+  if (imp.rows.some(r => r.created)) toast('نزّل ملف Excel الآن — كلمات المرور لن تظهر مرة أخرى. بعد التسليم يدخل كل طالب ويسجّل بصمة وجهه بنفسه.', 'ok');
 };
 $('#impExport').onclick = () => {
   if (!needXLSX()) return;
   const d = App.dept, link = location.origin + location.pathname.replace(/index\.html$/, '');
   const rows = imp.rows.filter(r => r.created).map(r => [r.id, r.name, r.email, r.pass, r.stage, r.shift, r.section]);
-  const ws = XLSX.utils.aoa_to_sheet([['رابط النظام', link], [], ['الرقم الجامعي','الاسم','البريد الإلكتروني (اسم الدخول)','كلمة المرور','المرحلة','الدراسة','الشعبة'], ...rows]);
+  const ws = XLSX.utils.aoa_to_sheet([['رابط النظام', link], ['التعليمات', 'يفتح الطالب الرابط في Chrome أو Safari، ويدخل بالبريد وكلمة المرور، ثم يسجّل بصمة وجهه بنفسه (مرة واحدة)، ويثبّت التطبيق.'], [],
+    ['الرقم الجامعي','الاسم','البريد الإلكتروني (اسم الدخول)','كلمة المرور','المرحلة','الدراسة','الشعبة'], ...rows]);
   ws['!cols'] = [{wch:14},{wch:30},{wch:32},{wch:14},{wch:10},{wch:10},{wch:8}];
   const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'حسابات الطلبة');
   XLSX.writeFile(wb, `حسابات_الطلبة_${d.id}_${today()}.xlsx`); imp.exported = true;
@@ -706,7 +751,9 @@ $('#studentsBody').onclick = async e => {
   if (b.dataset.clear && await confirmBox('حذف البصمة', 'سيتم حذف بصمة وجه هذا الطالب نهائياً.', 'حذف')){
     const s = findStudent(b.dataset.clear);
     bg(DB.update('att_packs', s.packId, {[`students.${s.id}.p`]:DEL, [`students.${s.id}.c`]:DEL, updatedAt:nowISO()}).p);
-    if (s.u) bg(DB.update('att_stu', s.u, {p:DEL}).p);
+    if (s.u) bg(DB.update('att_stu', s.u, {p:DEL, pAt:DEL, pSelf:DEL, pThumb:DEL}).p); // يستطيع الطالب إعادة تسجيلها
+    bg(DB.update('att_packs', s.packId, {[`students.${s.id}.self`]:DEL, [`students.${s.id}.th`]:DEL}).p);
+    audit('حذف بصمة طالب', `${s.name} (${s.id})`);
   }
   if (b.dataset.del && await confirmBox('حذف الطالب', 'سيتم حذف الطالب وبصمته. سجلات الحضور السابقة تبقى كما هي.', 'حذف')){
     const s = findStudent(b.dataset.del);
@@ -2426,12 +2473,77 @@ async function enterStudent(st){
   renderQueue(); flushQueue();
   faceToken = null; pendingQR = sessionStorage.getItem('fa_pending'); sessionStorage.removeItem('fa_pending');
   if (inAppBrowser()){ $('#scanBtn').classList.remove('hidden'); camFail('inapp'); return; }
+  $('#selfEnrollCard').classList.add('hidden');
   if ((st.p || []).length) doSelfie();   // السيلفي أولاً، ثم مسح QR
-  else {
-    faceState('ℹ لا توجد بصمة وجه لحسابك — يمكنك المسح في المحاضرات التي لا تتطلب السيلفي. لتسجيل بصمتك راجع القسم.', 'info');
-    if (pendingQR){ const t = pendingQR; pendingQR = null; submitFromText(t); } else startScan();
-  }
+  else showSelfEnroll();                 // أول دخول: يسجّل الطالب بصمة وجهه بنفسه
 }
+/* ---- تسجيل الطالب بصمة وجهه بنفسه (أول دخول بعد استيراد القسم لبياناته) ---- */
+function showSelfEnroll(){
+  stopScan(); $('#scanBtn').classList.add('hidden');
+  $('#selfEnrollCard').classList.remove('hidden'); $('#seCam').classList.add('hidden'); $('#seThumbs').innerHTML = ''; $('#seBar').style.width = '0%';
+  $('#seMsg').className = 'result info'; $('#seMsg').textContent = 'اضغط "ابدأ التسجيل"'; $('#seStart').classList.remove('hidden'); $('#seStart').disabled = false;
+  faceState('👤 سجّل بصمة وجهك أولاً لتتمكن من تسجيل الحضور', 'info');
+  loadStudentModels();
+}
+$('#seLater').onclick = () => {
+  $('#selfEnrollCard').classList.add('hidden');
+  faceState('ℹ لم تسجّل بصمة وجهك بعد — يمكنك المسح في المحاضرات التي لا تتطلب السيلفي فقط. ستظهر شاشة التسجيل عند دخولك القادم.', 'info');
+  if (pendingQR){ const t = pendingQR; pendingQR = null; submitFromText(t); } else startScan();
+};
+const seMsg = (t, c) => { $('#seMsg').textContent = t; $('#seMsg').className = 'result ' + (c || 'info'); };
+$('#seStart').onclick = async () => {
+  if (!$('#seConsent').checked) return seMsg('ضع إشارة الموافقة أولاً', 'err');
+  if (App.mode !== 'local' && !navigator.onLine) return seMsg('تسجيل البصمة يحتاج اتصالاً بالإنترنت', 'err');
+  $('#seStart').disabled = true; $('#seThumbs').innerHTML = '';
+  seMsg('⏳ جارٍ تجهيز التعرف على الوجه... (أول مرة قد يستغرق دقيقة)');
+  if (!(await loadStudentModels())){ $('#seStart').disabled = false; return seMsg('تعذّر تحميل نماذج الوجه — تحقق من الإنترنت وحاول مجدداً', 'err'); }
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:'user', width:{ideal:640}, height:{ideal:480}}}); }
+  catch(e){ $('#seStart').disabled = false; return seMsg('تعذّر تشغيل الكاميرا الأمامية — اسمح للمتصفح باستخدامها', 'err'); }
+  const v = $('#seVideo'); v.srcObject = stream; $('#seCam').classList.remove('hidden'); try{ await v.play(); }catch(e){}
+  const steps = [['انظر مباشرة إلى الكاميرا', 'c'], ['ابقَ مستقيماً — صورة ثانية', 'c'], ['أدِر رأسك قليلاً إلى اليمين', 's'], ['أدِر رأسك قليلاً إلى اليسار', 's'], ['انظر مباشرة مرة أخيرة', 'c']];
+  const opts = new faceapi.TinyFaceDetectorOptions({inputSize:416, scoreThreshold:0.5});
+  const descs = [], thumbs = []; let stable = 0, lastSide = 0; const t0 = Date.now();
+  const snap = det => { const b = det.detection.box, c = document.createElement('canvas'); c.width = c.height = 96; const pad = b.width * 0.25;
+    c.getContext('2d').drawImage(v, b.x - pad, b.y - pad, b.width + 2 * pad, b.height + 2 * pad, 0, 0, 96, 96); return c.toDataURL('image/jpeg', 0.7); };
+  try{
+    while (descs.length < steps.length){
+      if (Date.now() - t0 > 120000) throw new Error('timeout');
+      const [txt, mode] = steps[descs.length];
+      let faces = [];
+      try{ faces = await faceapi.detectAllFaces(v, opts).withFaceLandmarks().withFaceDescriptors(); }catch(e){}
+      if (faces.length !== 1){ stable = 0; seMsg(faces.length ? '⚠ يجب أن يظهر وجهك وحدك' : `🙂 ${txt}`); await new Promise(r => setTimeout(r, 120)); continue; }
+      const f = faces[0], rel = f.detection.box.width / (v.videoWidth || 640);
+      if (rel < 0.22){ stable = 0; seMsg('↕ قرّب الهاتف من وجهك قليلاً'); continue; }
+      const yaw = yawRatio(f.landmarks.positions) - 0.5, off = Math.abs(yaw);
+      const ok = mode === 'c' ? off < 0.07 : (off > 0.12 && off < 0.3 && (descs.length !== 3 || Math.sign(yaw) !== lastSide));
+      if (!ok){ stable = 0; seMsg((mode === 'c' ? '🙂 ' : '↔ ') + txt); continue; }
+      if (++stable < 3){ seMsg('✋ اثبت قليلاً...'); continue; }
+      if (descs.length && Math.min(...descs.map(d => faceapi.euclideanDistance(d, f.descriptor))) > 0.6){ stable = 0; seMsg('⚠ يبدو أن الوجه تغيّر — يجب أن يكون الشخص نفسه', 'err'); continue; }
+      descs.push(f.descriptor); thumbs.push(snap(f)); if (mode === 's') lastSide = Math.sign(yaw); stable = 0;
+      $('#seBar').style.width = (descs.length / steps.length * 100) + '%';
+      const im = document.createElement('img'); im.src = thumbs[thumbs.length - 1]; $('#seThumbs').appendChild(im);
+      if (navigator.vibrate) navigator.vibrate(60); beep();
+      await new Promise(r => setTimeout(r, 400));
+    }
+  }catch(e){
+    stream.getTracks().forEach(t => t.stop()); $('#seCam').classList.add('hidden'); $('#seStart').disabled = false;
+    return seMsg(e.message === 'timeout' ? 'انتهى الوقت — حاول مجدداً بإضاءة أفضل' : 'حدث خطأ: ' + e.message, 'err');
+  }
+  stream.getTracks().forEach(t => t.stop()); $('#seCam').classList.add('hidden');
+  seMsg('⏳ جارٍ حفظ البصمة...');
+  const enc = descs.map(encDesc), st = student, uid = App.mode === 'local' ? st.uid : auth.currentUser.uid;
+  try{
+    await DB.update('att_stu', uid, {p:enc, pAt:TS, pSelf:true, pThumb:thumbs[0]}).p;
+    await DB.update('att_packs', packId(st.deptId, st.stage, st.shift), {[`students.${st.sid}.p`]:enc, [`students.${st.sid}.c`]:nowISO(), [`students.${st.sid}.self`]:true, [`students.${st.sid}.th`]:thumbs[0]}).p;
+  }catch(e){ console.error(e); $('#seStart').disabled = false;
+    return seMsg(e.code === 'permission-denied' ? 'تعذّر الحفظ: لديك بصمة مسجّلة مسبقاً، أو بياناتك لا تطابق قائمة القسم. راجع موظف التسجيل.' : 'تعذّر الحفظ: ' + fbErr(e), 'err'); }
+  student.p = enc;
+  seMsg('✓ تم تسجيل بصمة وجهك بنجاح', 'ok'); $('#seStart').classList.add('hidden');
+  faceState('✓ بصمتك مسجّلة — عند وجود محاضرة التقط سيلفي ثم امسح رمز QR', 'ok');
+  $('#faceBtn').textContent = '📸 التقط سيلفي للتحقق من وجهك'; $('#faceBtn').classList.remove('hidden');
+  setTimeout(() => $('#selfEnrollCard').classList.add('hidden'), 4000);
+};
 /* ---- السيلفي أولاً: لا يُفتح مسح QR ولا يُسجَّل الحضور إلا إذا طابق الوجه صاحب الحساب ---- */
 let faceToken = null, faceTimer = null, pendingQR = null;
 function faceState(msg, cls){ const el = $('#faceState'); el.textContent = msg; el.className = 'result ' + (cls || 'info'); el.style.marginTop = 0; }
