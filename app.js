@@ -10,13 +10,15 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '3.6.1';
+const APP_VERSION = '3.7.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
 const QR_CAPTURE_TOL = 120000; // فرق مسموح (ملّي ثانية) بين وقت المسح على الهاتف ووقت الرمز
 const QR_FACE_EXTRA_MS = 45000; // وقت إضافي لإكمال سيلفي التحقق من الوجه
 const FACE_MATCH_MAX = 0.55;    // أقصى مسافة لقبول تطابق وجه الطالب مع بصمته
+const FACE_TOKEN_MS = 120000;   // صلاحية السيلفي قبل مسح QR (دقيقتان)
+const PF_SLOT_MS = 30000;       // رمز القاعة في طريقة "الوجه من هاتف الطالب" يتغير كل ٣٠ ثانية
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
 const ROLES = {super:'مدير النظام', dean:'عميد الكلية', head:'رئيس القسم', registrar:'موظف تسجيل', instructor:'تدريسي', disabled:'معطّل'};
 const ACTIVE_ROLES = ['super','dean','head','registrar','instructor'];
@@ -316,7 +318,7 @@ async function reconcileQR(){
   reconciling = true;
   try{
     for (const s of App.sessions){
-      if (!s.liveId || !s.qrSecret || s._pending) continue;
+      if (!s.liveId || !s.qrSecret || s._pending || s.liveMode === 'phoneface') continue;
       if (Date.now() > Date.parse(s.acceptUntil || 0) + 3600000) continue;
       if (!(s.instructorUid === App.user.uid || is('super','dean','head'))) continue;
       const lsKey = 'fa_rc_' + s.id, since = LS.get(lsKey, 0);
@@ -761,7 +763,10 @@ function applyAsg(){
   $('#cName').value = a.course; $('#cStage').value = a.stage; $('#cShift').value = a.shift; $('#cSection').value = a.section || '';
 }
 $('#cAsg').onchange = applyAsg;
-const qrOptUI = () => $$('.qrOpt').forEach(e => e.classList.toggle('hidden', $('#cMethod').value === 'face'));
+const qrOptUI = () => { const m = $('#cMethod').value;
+  $$('.qrOpt').forEach(e => e.classList.toggle('hidden', m === 'face'));
+  $$('.qrOnly').forEach(e => e.classList.toggle('hidden', !(m === 'qr' || m === 'both')));
+  $$('.pfOnly').forEach(e => e.classList.toggle('hidden', m !== 'phoneface')); };
 $('#cMethod').onchange = qrOptUI; qrOptUI();
 function renderCourseList(){
   const set = new Set(App.sessions.filter(s => !App.dept || s.deptId === App.dept.id).map(s => s.course));
@@ -770,7 +775,7 @@ function renderCourseList(){
 $('#startSessionBtn').onclick = async () => {
   const d = App.dept;
   if (!d) return toast('اختر القسم أولاً', 'err');
-  const method = $('#cMethod').value, useFace = method !== 'qr', useQR = method !== 'face';
+  const method = $('#cMethod').value, useFace = method === 'face' || method === 'both', useQR = method !== 'face';
   if (useFace && !modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه، أو اختر طريقة QR', 'err');
   const meta = {collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term,
     course:$('#cName').value.trim(), stage:$('#cStage').value, shift:$('#cShift').value, section:$('#cSection').value,
@@ -825,17 +830,22 @@ function drawQR(canvas, text){
 }
 function startQR(){
   const m = sess.meta, secret = randHex(16), pin = String(100000 + Math.floor(Math.random() * 900000));
-  const slotMs = (+$('#cQrSec').value || 5) * 1000, mins = +$('#cQrMins').value;
+  const pf = sess.method === 'phoneface', mode = pf ? 'phoneface' : 'qr';
+  const needCode = pf ? $('#cRoomCode').checked : true, face = pf ? true : $('#cQrFace').checked;
+  const slotMs = pf ? PF_SLOT_MS : (+$('#cQrSec').value || 5) * 1000, mins = +$('#cQrMins').value;
   const endsAt = mins ? Date.now() + mins * 60000 : null;
   const w = DB.set('att_live', null, {collegeId:m.collegeId, deptId:m.deptId, deptName:m.deptName, course:m.course, stage:m.stage, shift:m.shift,
     section:m.section, instructorUid:m.instructorUid, instructorName:m.instructorName, pin, open:true, startedAt:TS, localStart:Date.now(),
-    slotMs, endsAt, face:$('#cQrFace').checked, acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000)});
+    mode, needCode, slotMs, endsAt, face, acceptUntil:new Date(pf ? Date.now() : Date.now() + QR_ACCEPT_DAYS * 86400000)});
   const firstSlot = Math.floor(Date.now() / slotMs);
-  const q = sess.qr = {stats:{recv:0, ok:0, rej:0}, liveId:w.id, secret, pin, slotMs, endsAt, face:$('#cQrFace').checked, firstSlot, lastSlot:null, closed:false, offset:0, codes:new Map(), seen:{}, devices:{}, rejected:[], slot:null, chain:Promise.resolve()};
+  const q = sess.qr = {stats:{recv:0, ok:0, rej:0}, liveId:w.id, secret, pin, slotMs, endsAt, face, mode, needCode, firstSlot, lastSlot:null, closed:false, offset:0, codes:new Map(), seen:{}, devices:{}, rejected:[], slot:null, chain:Promise.resolve()};
   bg(w.p);
   $('#qrPin').textContent = pin; $('#qrFullPin').textContent = pin;
   $('#qrFullTitle').textContent = `${m.course} — ${m.deptName} — ${m.stage} / ${m.shift}`;
-  $('#qrHint').textContent = `يمسح الطلبة الرمز من داخل التطبيق بعد تسجيل الدخول. يتغيّر الرمز كل ${slotMs / 1000} ثوانٍ.`;
+  $('#qrHint').textContent = pf
+    ? (needCode ? 'يفتح الطلبة التطبيق، ويلتقطون سيلفي، ثم يكتبون رمز القاعة الظاهر هنا (يتغير كل ٣٠ ثانية).' : 'يفتح الطلبة التطبيق ويلتقطون سيلفي، فيُسجَّل من يطابق وجهه صورته في النظام.')
+    : `يلتقط الطالب سيلفي${face ? '' : ' (إن كانت له بصمة)'} ثم يمسح الرمز من داخل التطبيق. يتغيّر الرمز كل ${slotMs / 1000} ثوانٍ.`;
+  $('#qrPin').parentElement.classList.toggle('hidden', pf);
   $('#qrStatus').textContent = App.mode === 'local' ? 'وضع محلي: للتجربة فقط' :
     navigator.onLine ? '' : '⚠ غير متصل: يحفظ الطلبة حضورهم على هواتفهم، وتُضاف أسماؤهم إلى هذه المحاضرة تلقائياً عند توفر الإنترنت.';
   App.subs.live = DB.listenDoc('att_live', q.liveId, d => {
@@ -851,8 +861,9 @@ const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Stri
 async function qrTick(q){
   if (!sess || sess.qr !== q || q.closed) return;
   const now = Date.now(), slot = Math.floor(now / q.slotMs), left = q.slotMs - (now % q.slotMs);
-  if (q.endsAt && now >= q.endsAt) return closeQRWindow(q, 'انتهى وقت التسجيل بـ QR');
-  $('#qrWindow').textContent = q.endsAt ? `⏱ يتوقف التسجيل بـ QR خلال ${mmss(q.endsAt - now)}` : '⏱ التسجيل بـ QR مفتوح حتى إنهاء المحاضرة';
+  const lbl = q.mode === 'phoneface' ? 'التسجيل بالوجه من الهاتف' : 'التسجيل بـ QR';
+  if (q.endsAt && now >= q.endsAt) return closeQRWindow(q, 'انتهى وقت ' + lbl);
+  $('#qrWindow').textContent = q.endsAt ? `⏱ يتوقف ${lbl} خلال ${mmss(q.endsAt - now)}` : `⏱ ${lbl} مفتوح حتى إنهاء المحاضرة`;
   $('#qrFullWindow').textContent = q.endsAt ? `يتوقف خلال ${mmss(q.endsAt - now)}` : '';
   $('#qrBar').style.width = (left / q.slotMs * 100) + '%';
   $('#qrFullCount').textContent = `يتغير خلال ${Math.ceil(left / 1000)} ث`;
@@ -860,11 +871,24 @@ async function qrTick(q){
   q.slot = slot;
   const code = await codeFor(q, slot), text = `${appBase()}?a=${q.liveId}.${slot}.${code}${q.face ? '.f' : ''}`;
   if (q.closed) return;
+  if (q.mode === 'phoneface'){ // لا QR: رمز القاعة (إن طُلب) أو رسالة
+    const shown = q.needCode ? code : '';
+    $('#qrCode').textContent = shown || '📱'; $('#qrFullCode').textContent = shown;
+    const msg = q.needCode ? 'رمز القاعة' : 'افتحوا التطبيق والتقطوا سيلفي';
+    drawCodeCanvas($('#qrCanvas'), shown, msg); if ($('#qrFull').classList.contains('show')) drawCodeCanvas($('#qrFullCanvas'), shown, msg);
+    q.text = null; q.pfShown = shown; return;
+  }
   $('#qrCode').textContent = code; $('#qrFullCode').textContent = code;
   drawQR($('#qrCanvas'), text);
   if ($('#qrFull').classList.contains('show')) drawQR($('#qrFullCanvas'), text);
   q.text = text;
   for (const k of q.codes.keys()) if (k < slot - 200) q.codes.delete(k);
+}
+function drawCodeCanvas(canvas, code, msg){
+  const ctx = canvas.getContext('2d'), size = canvas.width;
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, size, canvas.height); ctx.textAlign = 'center'; ctx.fillStyle = '#14324f';
+  ctx.font = `bold ${Math.round(size / 15)}px Cairo, Tahoma`; ctx.fillText('📱 ' + msg, size / 2, size * (code ? 0.32 : 0.5));
+  if (code){ ctx.font = `bold ${Math.round(size / 5)}px monospace`; ctx.fillText(code, size / 2, size * 0.62); }
 }
 function drawClosed(canvas, msg){
   const ctx = canvas.getContext('2d'), size = canvas.width;
@@ -926,6 +950,15 @@ async function handleCheckins(q, list){
 // وإما أن يصل حياً خلال ~٢٠ ثانية (وقت الخادم)، أو يكون مسجّلاً على الهاتف دون اتصال بوقت مسح مطابق لوقت الرمز
 async function validateCheckin(q, c, at, lastSlot){
   const code = String(c.code || ''), ms = q.slotMs || SLOT_MS, inRange = s => s >= q.firstSlot - 1 && s <= lastSlot + 1;
+  if (q.mode === 'phoneface'){ // سيلفي من هاتف الطالب أثناء فتح التسجيل فقط
+    if (at == null) return {reason:'وصل بعد انتهاء التسجيل'};
+    if (q.needCode){
+      const sNow = Math.floor((at - q.offset) / ms); let ok = false;
+      for (let s = sNow + 1; s >= sNow - 3; s--) if (inRange(s) && code === await codeFor(q, s)){ ok = true; break; }
+      if (!ok) return {reason:'رمز القاعة غير صحيح'};
+    }
+    return {method:'phone-face'};
+  }
   const grace = Math.max(1, Math.ceil((QR_GRACE_MS + (q.face ? QR_FACE_EXTRA_MS : 0)) / ms));
   if (at != null){ // حيّ: بحسب وقت الخادم (لا يعتمد على ساعة هاتف الطالب)
     const sNow = Math.floor((at - q.offset) / ms);
@@ -958,7 +991,7 @@ document.addEventListener('click', e => {
 });
 function pickSpot(){
   if (!sess) return;
-  const qrIds = [...sess.roster.entries()].filter(([, st]) => st.status === 'qr' || st.status === 'qr-off').map(([id]) => id);
+  const qrIds = [...sess.roster.entries()].filter(([, st]) => ['qr','qr-off','phone-face'].includes(st.status)).map(([id]) => id);
   if (!qrIds.length){ $('#spotBody').innerHTML = '<p class="note">لا يوجد طلبة مسجّلون بـ QR بعد.</p>'; return; }
   const pick = qrIds.sort(() => Math.random() - 0.5).slice(0, Math.min(3, qrIds.length));
   $('#spotBody').innerHTML = pick.map(id => { const st = sess.roster.get(id);
@@ -983,6 +1016,7 @@ function stopQR(){
 $('#qrFullBtn').onclick = () => {
   const q = sess && sess.qr; if (!q) return;
   $('#qrFull').classList.add('show'); if (q.text) drawQR($('#qrFullCanvas'), q.text);
+  else if (q.mode === 'phoneface') drawCodeCanvas($('#qrFullCanvas'), q.pfShown || '', q.needCode ? 'رمز القاعة' : 'افتحوا التطبيق والتقطوا سيلفي');
   try{ document.documentElement.requestFullscreen && document.documentElement.requestFullscreen(); }catch(e){}
 };
 function closeQrFull(){ $('#qrFull').classList.remove('show'); try{ document.fullscreenElement && document.exitFullscreen(); }catch(e){} }
@@ -1043,7 +1077,7 @@ function markPresent(id, method, d=null, time=null){
   const st = sess.roster.get(id); if (!st) return;
   st.status = method; st.time = time || hhmm(); st.dist = d;
   if (method === 'face'){ beep(); showPrompt(`✓ ${sess.names[id] || id} — حاضر`, 'ok'); }
-  if (method === 'qr' || method === 'qr-off') beep();
+  if (['qr','qr-off','phone-face'].includes(method)) beep();
   renderRoster();
 }
 $('#rosterSearch').oninput = renderRoster;
@@ -1055,7 +1089,7 @@ function renderRoster(){
     .filter(([id]) => !q || (sess.names[id] || '').includes(q) || id.includes(q))
     .sort((a, b) => (a[1].status === 'absent') - (b[1].status === 'absent'));
   $('#rosterBody').innerHTML = rows.map(([id, st]) => {
-    const badge = st.status === 'qr-off' ? '<span class="badge b-qr">حاضر (QR دون اتصال)</span>' : st.status === 'qr' ? '<span class="badge b-qr">حاضر (QR)</span>' : st.status === 'face' ? '<span class="badge b-face">حاضر (وجه)</span>' : st.status === 'manual' ? '<span class="badge b-man">حاضر (يدوي)</span>' : '<span class="badge b-abs">غائب</span>';
+    const badge = st.status === 'phone-face' ? '<span class="badge b-face">حاضر (سيلفي)</span>' : st.status === 'qr-off' ? '<span class="badge b-qr">حاضر (QR دون اتصال)</span>' : st.status === 'qr' ? '<span class="badge b-qr">حاضر (QR)</span>' : st.status === 'face' ? '<span class="badge b-face">حاضر (وجه)</span>' : st.status === 'manual' ? '<span class="badge b-man">حاضر (يدوي)</span>' : '<span class="badge b-abs">غائب</span>';
     const btn = st.status === 'absent' ? `<button class="btn sm light" data-man="${esc(id)}">حاضر يدوياً</button>` : `<button class="btn sm light" data-undo="${esc(id)}">إلغاء</button>`;
     return `<tr><td>${sfImg(st.selfie)} ${esc(sess.names[id] || id)}${st.flag === 'spot' ? ' <span class="badge b-abs">غائب في التحقق العشوائي</span>' : ''}${(!sess.useFace || sess.hasPrint[id]) ? '' : ' <span class="badge b-gray">بلا بصمة</span>'}</td><td>${badge}</td><td>${st.time}</td><td>${btn}</td></tr>`;
   }).join('');
@@ -1085,7 +1119,7 @@ $('#finishBtn').onclick = async () => {
   });
   if (sess.qr){ // لإضافة طلبة QR الذين يرفعون حضورهم لاحقاً (دون اتصال)
     const q = sess.qr;
-    Object.assign(rec, {liveId:q.liveId, qrSecret:q.secret, qrSlotMs:q.slotMs, qrFace:!!q.face,
+    Object.assign(rec, {liveMode:q.mode || 'qr', liveId:q.liveId, qrSecret:q.secret, qrSlotMs:q.slotMs, qrFace:!!q.face,
       spotAbsent:entries.filter(([, s]) => s.flag === 'spot').map(([id]) => id), qrFrom:q.firstSlot, qrTo:q.lastSlot != null ? q.lastSlot : Math.floor(Date.now() / q.slotMs),
       acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000).toISOString(), qrLate:0});
   }
@@ -1127,7 +1161,7 @@ $('#sessionsBody').onclick = async e => {
     const nm = id => (s.names && s.names[id]) || id;
     const rows = [['القسم', s.deptName || deptName(s.deptId), 'المادة', s.course, 'التاريخ', s.date, 'الساعات', s.hours],
                   ['الرقم','الاسم','الحالة','طريقة التسجيل','الوقت']];
-    (s.present || []).forEach(p => rows.push([p.id, nm(p.id), 'حاضر', {face:'بصمة وجه', qr:'QR', 'qr-off':'QR دون اتصال', manual:'يدوي'}[p.method] || p.method, p.time]));
+    (s.present || []).forEach(p => rows.push([p.id, nm(p.id), 'حاضر', {face:'بصمة وجه', qr:'QR', 'qr-off':'QR دون اتصال', 'phone-face':'سيلفي من الهاتف', manual:'يدوي'}[p.method] || p.method, p.time]));
     (s.absentees || []).forEach(id => rows.push([id, nm(id), 'غائب', '', '']));
     download(`حضور_${s.course}_${s.date}.csv`, toCSV(rows), 'text/csv');
   }
@@ -1485,12 +1519,66 @@ async function enterStudent(st){
   const bind = await bindDevice(st);
   if (bind !== true){ stopScan(); $('#scanBtn').classList.add('hidden'); camHelp(bind); return; }
   renderQueue(); flushQueue();
-  if ((st.p || []).length) loadStudentModels(); // تجهيز التحقق من الوجه مسبقاً ليعمل دون اتصال
-  const pend = sessionStorage.getItem('fa_pending');
-  if (pend){ sessionStorage.removeItem('fa_pending'); submitFromText(pend); }
-  else if (inAppBrowser()){ $('#scanBtn').classList.remove('hidden'); camFail('inapp'); }
-  else startScan(); // تفتح الكاميرا مباشرة بعد الدخول
+  faceToken = null; pendingQR = sessionStorage.getItem('fa_pending'); sessionStorage.removeItem('fa_pending');
+  if (inAppBrowser()){ $('#scanBtn').classList.remove('hidden'); camFail('inapp'); return; }
+  if ((st.p || []).length) doSelfie();   // السيلفي أولاً، ثم مسح QR
+  else {
+    faceState('ℹ لا توجد بصمة وجه لحسابك — يمكنك المسح في المحاضرات التي لا تتطلب السيلفي. لتسجيل بصمتك راجع القسم.', 'info');
+    if (pendingQR){ const t = pendingQR; pendingQR = null; submitFromText(t); } else startScan();
+  }
 }
+/* ---- السيلفي أولاً: لا يُفتح مسح QR ولا يُسجَّل الحضور إلا إذا طابق الوجه صاحب الحساب ---- */
+let faceToken = null, faceTimer = null, pendingQR = null;
+function faceState(msg, cls){ const el = $('#faceState'); el.textContent = msg; el.className = 'result ' + (cls || 'info'); el.style.marginTop = 0; }
+const faceValid = () => faceToken && faceToken.ok && Date.now() - faceToken.at < FACE_TOKEN_MS;
+$('#faceBtn').onclick = () => doSelfie();
+async function doSelfie(){
+  $('#faceBtn').classList.add('hidden'); clearInterval(faceTimer); faceToken = null; $('#pfCard').classList.add('hidden');
+  faceState('📸 التقط سيلفي: انظر إلى الكاميرا الأمامية، ثم أدِر رأسك قليلاً', 'info');
+  const r = await verifyFace(); $('#stResult').innerHTML = '';
+  if (!r.ok){
+    const why = {mismatch:'✗ الوجه لا يطابق صاحب الحساب — لن يُسجَّل الحضور.', timeout:'✗ لم يكتمل التحقق من الوجه. حاول مجدداً بإضاءة جيدة.',
+      nomodel:'✗ تعذّر تحميل التحقق من الوجه (يحتاج إنترنت أول مرة).', nocam:'✗ تعذّر تشغيل الكاميرا الأمامية — اسمح للمتصفح باستخدام الكاميرا.',
+      noprint:'✗ لا توجد بصمة وجه لحسابك — راجع القسم.'}[r.why] || '✗ لم يتحقق الوجه.';
+    faceState(why, 'err'); $('#faceBtn').textContent = '📸 إعادة التقاط السيلفي'; $('#faceBtn').classList.remove('hidden');
+    return;
+  }
+  faceToken = Object.assign({at:Date.now()}, r);
+  if (navigator.vibrate) navigator.vibrate(80);
+  faceTimer = setInterval(() => {
+    const left = FACE_TOKEN_MS - (Date.now() - faceToken.at);
+    if (left <= 0){ clearInterval(faceTimer); faceToken = null; stopScan(); $('#scanBtn').classList.add('hidden'); $('#pfCard').classList.add('hidden');
+      faceState('⏱ انتهت صلاحية التحقق — التقط سيلفي جديداً عند وجود رمز الحضور.', 'info');
+      $('#faceBtn').textContent = '📸 التقط سيلفي للتحقق من وجهك'; $('#faceBtn').classList.remove('hidden'); return; }
+    faceState(`✓ تم التحقق من وجهك — امسح رمز QR أو سجّل في محاضرة مفتوحة خلال ${mmss(left)}`, 'ok');
+  }, 1000);
+  faceState('✓ تم التحقق من وجهك', 'ok');
+  loadOpenLectures();
+  if (pendingQR){ const t = pendingQR; pendingQR = null; submitFromText(t); }
+  else startScan();
+}
+async function loadOpenLectures(){
+  if (!navigator.onLine || !student || App.mode === 'local') return;
+  try{
+    const list = (await FS.query('att_live', [['deptId', student.deptId], ['stage', student.stage], ['shift', student.shift], ['open', true], ['mode', 'phoneface']]))
+      .filter(l => !l.section || !student.section || l.section === student.section);
+    $('#pfCard').classList.toggle('hidden', !list.length);
+    $('#pfList').innerHTML = list.map(l => `<div class="spot" style="font-size:16px;flex-wrap:wrap">
+      <span>📘 ${esc(l.course)} <span class="note">— ${esc(l.instructorName || '')}</span></span>
+      <span class="row">${l.needCode ? `<input data-pfcode="${esc(l.id)}" placeholder="رمز القاعة" inputmode="numeric" dir="ltr" style="width:120px">` : ''}
+      <button class="btn green" data-pf="${esc(l.id)}" data-ms="${l.slotMs || PF_SLOT_MS}" data-need="${l.needCode ? 1 : 0}">✓ سجّل حضوري</button></span></div>`).join('');
+  }catch(e){ console.warn('open lectures', e); }
+}
+$('#pfList').onclick = e => {
+  const b = e.target.closest('button[data-pf]'); if (!b) return;
+  if (!faceValid()) return stResult('التقط سيلفي أولاً', 'err');
+  const code = b.dataset.need === '1' ? ($(`input[data-pfcode="${b.dataset.pf}"]`).value || '').trim() : '';
+  if (b.dataset.need === '1' && !/^\d{6}$/.test(code)) return stResult('اكتب رمز القاعة الظاهر على شاشة التدريسي (٦ أرقام)', 'err');
+  const now = Date.now(), face = faceToken; faceToken = null; clearInterval(faceTimer);
+  stopScan(); $('#scanBtn').classList.add('hidden'); $('#pfCard').classList.add('hidden');
+  faceState('✓ تم التحقق من وجهك وإرسال الحضور', 'ok');
+  submitCheckin(b.dataset.pf, Math.floor(now / +b.dataset.ms), code, now, face);
+};
 // ربط الحساب بهاتف واحد، والهاتف بحساب واحد (يمنع الدخول بحساب زميل على نفس الهاتف)
 async function bindDevice(st){
   if (App.mode === 'local' || st.boundDevice === deviceId) return true;
@@ -1521,9 +1609,11 @@ function parseQR(text){
 async function submitFromText(text){
   const q = parseQR(text);
   if (!q) return stResult('هذا ليس رمز حضور صالحاً', 'err');
-  const capturedAt = Date.now();
-  let face = null;
-  if (q.face) face = await verifyFace();
+  const capturedAt = Date.now(), hasPrint = (student.p || []).length > 0;
+  if (hasPrint && !faceValid()){ pendingQR = text; return doSelfie(); } // السيلفي أولاً
+  if (!hasPrint && q.face) return stResult('✗ هذه المحاضرة تتطلب التحقق من الوجه، ولا توجد بصمة وجه لحسابك — راجع القسم.', 'err');
+  const face = hasPrint ? faceToken : null;
+  if (face){ faceToken = null; clearInterval(faceTimer); faceState('✓ تم التحقق من وجهك ومسح الرمز', 'ok'); $('#pfCard').classList.add('hidden'); }
   submitCheckin(q.liveId, q.slot, q.code, capturedAt, face);
 }
 /* ---- تحقق الوجه على هاتف الطالب (سيلفي + حركة الرأس) ---- */
@@ -1658,7 +1748,10 @@ $('#mSend').onclick = async () => {
   try{
     const list = await FS.query('att_live', [['pin', pin], ['open', true]]);
     if (!list.length) return stResult('لا توجد محاضرة مفتوحة بهذا الرقم', 'err');
-    const face = list[0].face ? await verifyFace() : null;
+    const hasPrint = (student.p || []).length > 0;
+    if (hasPrint && !faceValid()) return stResult('التقط سيلفي أولاً (الزر في الأعلى)، ثم أرسل الرمز.', 'err');
+    if (!hasPrint && list[0].face) return stResult('✗ هذه المحاضرة تتطلب التحقق من الوجه، ولا توجد بصمة وجه لحسابك.', 'err');
+    const face = hasPrint ? faceToken : null; faceToken = null; clearInterval(faceTimer);
     submitCheckin(list[0].id, Math.floor(capturedAt / (list[0].slotMs || SLOT_MS)), code, capturedAt, face);
   }catch(e){ stResult('تعذّر البحث عن المحاضرة: ' + fbErr(e), 'err'); }
 };
@@ -1713,7 +1806,7 @@ function camFail(kind, e){
 function stopScan(){
   scanOn = false; if (scanStream){ scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
   const v = $('#scanVideo'); if (v) v.srcObject = null; $('#scanArea') && $('#scanArea').classList.add('hidden');
-  $('#scanBtn') && $('#scanBtn').classList.remove('hidden');
+  if ($('#scanBtn') && (!student || !(student.p || []).length || faceValid())) $('#scanBtn').classList.remove('hidden');
 }
 $('#scanStop').onclick = stopScan;
 let barcodeDetector = null;

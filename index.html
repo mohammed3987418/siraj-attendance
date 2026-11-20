@@ -135,6 +135,14 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 </header>
 <div class="stu-wrap">
   <div class="card"><h2 id="stName" style="margin-bottom:4px"></h2><div class="note" id="stInfo"></div></div>
+  <div class="card" id="faceStep">
+    <div id="faceState" class="result info" style="margin-top:0">📸 التحقق من الوجه</div>
+    <button class="btn big-btn green hidden" id="faceBtn" style="margin-top:10px">📸 التقط سيلفي للتحقق من وجهك</button>
+  </div>
+  <div class="card hidden" id="pfCard">
+    <h2 style="margin-bottom:6px">محاضرات مفتوحة للتسجيل بالوجه</h2>
+    <div id="pfList"></div>
+  </div>
   <div class="card">
     <div id="scanArea" class="hidden">
       <p class="note" style="text-align:center;margin:0 0 6px">وجّه الكاميرا نحو رمز QR على شاشة التدريسي</p>
@@ -241,10 +249,11 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
       <div><label>النوع</label><select id="cType"><option>نظري</option><option>عملي</option></select></div>
       <div><label>عدد الساعات</label><input id="cHours" type="number" min="1" max="6" value="2"></div>
       <div><label>التاريخ</label><input id="cDate" type="date"></div>
-      <div><label>طريقة تسجيل الحضور</label><select id="cMethod"><option value="face">بصمة الوجه</option><option value="qr">QR كود (هواتف الطلبة)</option><option value="both">الاثنان معاً</option></select></div>
-      <div class="qrOpt"><label>مدة التسجيل بـ QR</label><select id="cQrMins"><option value="3">3 دقائق</option><option value="5">5 دقائق</option><option value="10" selected>10 دقائق</option><option value="15">15 دقيقة</option><option value="20">20 دقيقة</option><option value="30">30 دقيقة</option><option value="0">حتى إنهاء المحاضرة</option></select></div>
-      <div class="qrOpt"><label>يتغيّر رمز QR كل</label><select id="cQrSec"><option value="5" selected>5 ثوانٍ</option><option value="10">10 ثوانٍ</option><option value="15">15 ثانية</option><option value="30">30 ثانية</option></select></div>
-      <div class="qrOpt" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:0;padding-top:4px"><input type="checkbox" id="cQrFace" style="width:auto" checked> تحقق من وجه الطالب على هاتفه بعد المسح (سيلفي) — يمنع تسجيل طالب بهاتف زميله</label></div>
+      <div><label>طريقة تسجيل الحضور</label><select id="cMethod"><option value="face">بصمة الوجه (كاميرا التدريسي)</option><option value="qr">QR كود (هواتف الطلبة)</option><option value="both">بصمة الوجه + QR معاً</option><option value="phoneface">بصمة الوجه من هاتف الطالب (سيلفي)</option></select></div>
+      <div class="qrOpt"><label>مدة التسجيل من هواتف الطلبة</label><select id="cQrMins"><option value="3">3 دقائق</option><option value="5">5 دقائق</option><option value="10" selected>10 دقائق</option><option value="15">15 دقيقة</option><option value="20">20 دقيقة</option><option value="30">30 دقيقة</option><option value="0">حتى إنهاء المحاضرة</option></select></div>
+      <div class="qrOpt qrOnly"><label>يتغيّر رمز QR كل</label><select id="cQrSec"><option value="5" selected>5 ثوانٍ</option><option value="10">10 ثوانٍ</option><option value="15">15 ثانية</option><option value="30">30 ثانية</option></select></div>
+      <div class="qrOpt qrOnly" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:0;padding-top:4px"><input type="checkbox" id="cQrFace" style="width:auto" checked> سيلفي قبل مسح QR: لا يُسجَّل الطالب إلا إذا طابق وجهه صورته في النظام (يمنع التسجيل بهاتف زميل)</label></div>
+      <div class="qrOpt pfOnly" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:0;padding-top:4px"><input type="checkbox" id="cRoomCode" style="width:auto" checked> يكتب الطالب رمز القاعة الظاهر على شاشتي (يثبت وجوده داخل القاعة — موصى به)</label></div>
     </div>
     <button class="btn green" id="startSessionBtn" style="margin-top:12px">▶ بدء المحاضرة</button>
   </div>
