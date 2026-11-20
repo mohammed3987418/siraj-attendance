@@ -1,5 +1,5 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.4
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.6
 // المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -73,8 +73,24 @@ service cloud.firestore {
     match /att_stu/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || canSeeDept(resource.data.collegeId, resource.data.deptId));
       allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
-      allow update: if canManageDept(resource.data.collegeId, resource.data.deptId)
-        && canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
+      allow update: if (canManageDept(resource.data.collegeId, resource.data.deptId)
+          && canManageDept(request.resource.data.collegeId, request.resource.data.deptId))
+        // الطالب يربط حسابه بهاتفه: مرة أولى، أو خلال ٣٠ دقيقة من الربط (تثبيت التطبيق)، أو بعد ٧ أيام
+        || (signedIn() && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['boundDevice', 'boundAt', 'binds'])
+          && request.resource.data.boundAt == request.time
+          && getAfter(/databases/$(database)/documents/att_devices/$(request.resource.data.boundDevice)).data.uid == request.auth.uid
+          && (!('boundAt' in resource.data)
+              || request.time < resource.data.boundAt + duration.value(30, 'm')
+              || request.time > resource.data.boundAt + duration.value(7, 'd')));
+      allow delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
+    }
+
+    // كل هاتف مربوط بحساب طالب واحد فقط
+    match /att_devices/{dev} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.uid == request.auth.uid;
       allow delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
     }
 
@@ -97,6 +113,7 @@ service cloud.firestore {
           && (live().open == true || request.time < live().acceptUntil)
           && stu().deptId == live().deptId
           && request.resource.data.sid == stu().sid
+          && request.resource.data.deviceId == stu().get('boundDevice', '')
           && request.resource.data.at == request.time;
       }
     }
