@@ -102,6 +102,10 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .result{padding:14px;border-radius:10px;font-weight:700;text-align:center;margin-top:10px}
 .result.ok{background:#e5f6ee;color:var(--green)}.result.err{background:#fdecea;color:var(--red)}.result.info{background:#e6eef7;color:var(--navy2)}
 .b-qr{background:#e6eef7;color:var(--navy2)}
+#gBody input{width:72px;text-align:center;padding:5px}
+#gBody input.bad{border-color:var(--red);background:#fdecea}
+#gBody input.auto{background:#eef6f1}
+#gBody td.tot{font-weight:700;color:var(--navy)}
 .sf{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid var(--line);cursor:zoom-in;transform:scaleX(-1)}
 .spot{display:flex;gap:12px;align-items:center;justify-content:space-between;background:#f0f4f8;border-radius:12px;padding:10px 14px;font-size:20px;font-weight:700}
 .spot img{width:64px;height:64px;border-radius:50%;object-fit:cover;transform:scaleX(-1)}
@@ -186,6 +190,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
   <button data-tab="tStudents">الطلبة والبصمات</button>
   <button data-tab="tSession">أخذ الحضور</button>
   <button data-tab="tRecords">السجلات والتقارير</button>
+  <button data-tab="tGrades">اللجنة الامتحانية</button>
   <button data-tab="tUsers">المستخدمون</button>
   <button data-tab="tOrg">الهيكل التنظيمي</button>
   <button data-tab="tSettings">الإعدادات</button>
@@ -333,6 +338,81 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
   </div>
 </section>
 
+<!-- السعي -->
+<section id="tGrades" class="tab">
+  <div class="card" id="crsCard">
+    <h2>المواد الدراسية وتوزيع الدرجات — <span class="deptName"></span></h2>
+    <p class="note">تحددها اللجنة الامتحانية (أو رئيس القسم). يلتزم التدريسي بهذا التوزيع عند إدخال السعي. اكتب المكوّنات بالشكل: <b>الاسم:الدرجة</b> مفصولة بفاصلة، وضع <b>*</b> بعد الاسم ليُحسب تلقائياً من الحضور. مثال: <span dir="rtl">الامتحان الشهري:20، الاختبارات اليومية:10، الحضور*:10</span></p>
+    <div class="grid" id="crsForm">
+      <div><label>المرحلة</label><select id="crStage" class="optStage"></select></div>
+      <div><label>اسم المادة</label><input id="crName"></div>
+      <div><label>رمز المادة</label><input id="crCode" dir="ltr"></div>
+      <div><label>عدد الوحدات</label><input id="crUnits" type="number" min="0" step="0.5" value="3"></div>
+      <div><label>درجة السعي</label><input id="crSae" type="number" min="0" max="100" value="40"></div>
+      <div><label>درجة الامتحان النهائي</label><input id="crFinal" type="number" min="0" max="100" value="60"></div>
+      <div style="grid-column:1/-1"><label>مكوّنات السعي</label><input id="crComps" value="الامتحان الشهري:20، الاختبارات اليومية:10، الواجبات والتقارير:5، الحضور*:5"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="crSave">إضافة / تعديل المادة</button><button class="btn light" id="crClear">تفريغ</button><span id="crNote" class="note"></span></div>
+    <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>المرحلة</th><th>المادة</th><th>الرمز</th><th>الوحدات</th><th>السعي</th><th>النهائي</th><th>مكوّنات السعي</th><th></th></tr></thead><tbody id="crBody"></tbody></table></div>
+  </div>
+  <div class="card">
+    <h2>جداول الدرجات — <span class="deptName"></span> — <span id="gTerm"></span></h2>
+    <div class="row">
+      <select id="gSel" style="width:auto;min-width:340px"></select>
+      <button class="btn" id="gOpenBtn">فتح</button>
+      <button class="btn light hidden" id="gRefreshBtn">↻ تحديث القائمة</button>
+    </div>
+    <div id="gListBox" class="hidden" style="margin-top:12px">
+      <div class="tbl-wrap"><table><thead><tr><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>التدريسي</th><th>مجموع السعي</th><th>الحالة</th><th></th></tr></thead><tbody id="gListBody"></tbody></table></div>
+    </div>
+  </div>
+  <div class="card hidden" id="gDistCard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">توزيع درجات السعي — <span id="gTitle"></span></h2>
+      <span id="gStatus" class="badge b-gray"></span>
+    </div>
+    <div class="row" style="margin:10px 0">
+      <label style="margin:0;color:#1c2733">مجموع السعي:</label><input id="gMax" type="number" min="1" max="100" value="40" style="width:90px">
+      <span class="note">قوالب جاهزة:</span>
+      <button class="btn sm light" data-tpl="theory">نظري (40)</button>
+      <button class="btn sm light" data-tpl="lab">نظري + عملي (50)</button>
+      <button class="btn sm light" data-tpl="simple">شهري + يومي (40)</button>
+    </div>
+    <div class="tbl-wrap"><table><thead><tr><th>المكوّن</th><th>الدرجة القصوى</th><th>طريقة الاحتساب</th><th></th></tr></thead><tbody id="gCompBody"></tbody></table></div>
+    <div class="row" style="margin-top:10px;justify-content:space-between">
+      <div class="row"><button class="btn sm" id="gAddComp">+ إضافة مكوّن</button><b id="gSumNote"></b></div>
+      <button class="btn green" id="gSaveDist">حفظ التوزيع</button>
+    </div>
+    <p class="note">"الحضور (تلقائي)": يُحسب من سجلات حضور هذه المادة = الدرجة القصوى × نسبة ساعات الحضور. يمكن تعديله يدوياً لطالب معيّن.</p>
+  </div>
+  <div class="card hidden" id="gSheetCard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">درجات الطلبة <span id="gCount" class="badge b-gray"></span></h2>
+      <div class="row">
+        <button class="btn" id="gSave">💾 حفظ الدرجات</button>
+        <button class="btn light" id="gExport">⬇ Excel</button>
+        <button class="btn amber" id="gSubmit">📤 إرسال إلى رئيس القسم</button>
+        <button class="btn green hidden" id="gApprove">✓ مصادقة</button>
+        <button class="btn red hidden" id="gReturn">↩ إعادة إلى التدريسي</button>
+      </div>
+    </div>
+    <p class="note" id="gNote"></p>
+    <div class="tbl-wrap" style="max-height:600px"><table><thead id="gHead"></thead><tbody id="gBody"></tbody></table></div>
+  </div>
+  <div class="card" id="masterCard">
+    <h2>الماستر شيت — <span class="deptName"></span></h2>
+    <div class="row">
+      <select id="msStage" class="optStage" style="width:auto"></select>
+      <select id="msShift" class="optShift" style="width:auto"></select>
+      <button class="btn" id="msShow">عرض الماستر شيت</button>
+      <button class="btn light" id="msExport">⬇ Excel</button>
+    </div>
+    <p class="note">لكل مادة: السعي + النهائي = الدرجة النهائية من ١٠٠. المعدل موزون بعدد الوحدات. النجاح في المادة ٥٠ فأكثر.</p>
+    <div class="tbl-wrap" style="max-height:600px"><table><thead id="msHead"></thead><tbody id="msBody"></tbody></table></div>
+  </div>
+</section>
+
+<!-- (ماستر شيت داخل تبويب اللجنة) -->
 <!-- المستخدمون -->
 <section id="tUsers" class="tab">
   <div class="card">

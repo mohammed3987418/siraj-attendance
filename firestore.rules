@@ -1,5 +1,5 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.6
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.9
 // المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -8,13 +8,13 @@ service cloud.firestore {
     function me() { return get(/databases/$(database)/documents/att_users/$(request.auth.uid)).data; }
     function role() { return me().role; }
     function isSuper() { return signedIn() && role() in ['super', 'admin']; }
-    function active() { return signedIn() && role() in ['super', 'admin', 'dean', 'head', 'registrar', 'instructor']; }
+    function active() { return signedIn() && role() in ['super', 'admin', 'dean', 'head', 'registrar', 'committee', 'instructor']; }
     function isDeanOf(c) { return active() && role() == 'dean' && me().collegeId == c; }
     function hasDept(d) { return active() && d in me().get('deptIds', []); }
     function canSeeDept(c, d) { return isSuper() || isDeanOf(c) || hasDept(d); }
     function canManageDept(c, d) { return isSuper() || isDeanOf(c) || (role() in ['head', 'registrar'] && hasDept(d)); }
-    function lowDean() { return ['head', 'registrar', 'instructor', 'disabled']; }
-    function lowHead() { return ['registrar', 'instructor', 'disabled']; }
+    function lowDean() { return ['head', 'registrar', 'committee', 'instructor', 'disabled']; }
+    function lowHead() { return ['registrar', 'committee', 'instructor', 'disabled']; }
 
     // الهيكل التنظيمي: أسماء الكليات والأقسام فقط (يقرؤه الطالب عند تفعيل حسابه)
     match /att_org/{doc} {
@@ -57,7 +57,7 @@ service cloud.firestore {
       allow read: if isSuper()
         || (active() && resource.data.instructorUid == request.auth.uid)
         || isDeanOf(resource.data.collegeId)
-        || (active() && role() == 'head' && hasDept(resource.data.deptId));
+        || (active() && role() in ['head', 'committee'] && hasDept(resource.data.deptId));
       allow create: if isSuper()
         || (active() && role() in ['dean', 'head', 'instructor']
             && request.resource.data.instructorUid == request.auth.uid
@@ -67,6 +67,34 @@ service cloud.firestore {
       // التدريسي يضيف إلى محاضرته طلبة QR الذين رفعوا حضورهم لاحقاً (دون اتصال) فقط
       allow update: if active() && resource.data.instructorUid == request.auth.uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['present', 'absentees', 'qrLate', 'updatedAt']);
+    }
+
+    // مواد القسم (الوحدات وتوزيع الدرجات) — تحددها اللجنة الامتحانية أو رئيس القسم
+    match /att_courses/{deptId} {
+      allow read: if resource == null || canSeeDept(resource.data.collegeId, deptId);
+      allow write: if isSuper() || isDeanOf(request.resource.data.collegeId)
+        || (active() && role() in ['head', 'committee'] && hasDept(deptId));
+    }
+
+    // جداول الدرجات: السعي (التدريسي) + النهائي (اللجنة الامتحانية)
+    match /att_grades/{id} {
+      allow read: if resource == null || isSuper() || isDeanOf(resource.data.collegeId)
+        || (active() && role() in ['head', 'committee'] && hasDept(resource.data.deptId))
+        || (active() && resource.data.instructorUid == request.auth.uid);
+      allow create: if isSuper() || isDeanOf(request.resource.data.collegeId)
+        || (active() && role() in ['head', 'instructor'] && hasDept(request.resource.data.deptId)
+            && request.resource.data.instructorUid == request.auth.uid);
+      allow update: if isSuper() || isDeanOf(resource.data.collegeId)
+        || (active() && role() == 'head' && hasDept(resource.data.deptId))
+        // اللجنة الامتحانية: درجات النهائي فقط
+        || (active() && role() == 'committee' && hasDept(resource.data.deptId)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['finals', 'totals', 'names', 'finalsAt', 'finalsBy']))
+        // التدريسي: السعي فقط، وقبل المصادقة
+        || (active() && resource.data.instructorUid == request.auth.uid
+            && resource.data.status in ['draft', 'returned'] && request.resource.data.status in ['draft', 'returned', 'submitted']
+            && request.resource.data.instructorUid == resource.data.instructorUid
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['finals', 'finalsAt', 'finalsBy', 'approvedAt', 'approvedBy']));
+      allow delete: if isSuper();
     }
 
     // حسابات الطلبة: ينشئها موظف التسجيل/رئيس القسم من ملف Excel
