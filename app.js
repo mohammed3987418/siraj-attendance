@@ -10,9 +10,9 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '3.4.0';
-const SLOT_MS = 5000; // يتغير رمز QR كل ٥ ثوانٍ
-const QR_GRACE_SLOTS = 4; // يُقبل الرمز حتى ~٢٠ ثانية (زمن المسح والإرسال) عند الاتصال
+const APP_VERSION = '3.5.0';
+const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
+const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
 const QR_CAPTURE_TOL = 120000; // فرق مسموح (ملّي ثانية) بين وقت المسح على الهاتف ووقت الرمز
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/model/';
@@ -321,7 +321,7 @@ async function reconcileQR(){
       let list;
       try{ list = await DB.queryAfter(`att_live/${s.liveId}/c`, 'at', since); }catch(e){ console.warn(e); continue; }
       if (!list.length) continue;
-      const q = {secret:s.qrSecret, codes:new Map(), offset:0, firstSlot:s.qrFrom};
+      const q = {secret:s.qrSecret, codes:new Map(), offset:0, firstSlot:s.qrFrom, slotMs:s.qrSlotMs || SLOT_MS};
       const present = new Set((s.present || []).map(p => p.id)), devices = {};
       (s.present || []).forEach(p => { if (p.device) devices[p.device] = p.id; });
       const roster = new Set([...(s.absentees || []), ...present]), add = [];
@@ -739,6 +739,8 @@ function applyAsg(){
   $('#cName').value = a.course; $('#cStage').value = a.stage; $('#cShift').value = a.shift; $('#cSection').value = a.section || '';
 }
 $('#cAsg').onchange = applyAsg;
+const qrOptUI = () => $$('.qrOpt').forEach(e => e.classList.toggle('hidden', $('#cMethod').value === 'face'));
+$('#cMethod').onchange = qrOptUI; qrOptUI();
 function renderCourseList(){
   const set = new Set(App.sessions.filter(s => !App.dept || s.deptId === App.dept.id).map(s => s.course));
   $('#courseList').innerHTML = [...set].map(c => `<option value="${esc(c)}">`).join('');
@@ -801,14 +803,17 @@ function drawQR(canvas, text){
 }
 function startQR(){
   const m = sess.meta, secret = randHex(16), pin = String(100000 + Math.floor(Math.random() * 900000));
+  const slotMs = (+$('#cQrSec').value || 5) * 1000, mins = +$('#cQrMins').value;
+  const endsAt = mins ? Date.now() + mins * 60000 : null;
   const w = DB.set('att_live', null, {collegeId:m.collegeId, deptId:m.deptId, deptName:m.deptName, course:m.course, stage:m.stage, shift:m.shift,
     section:m.section, instructorUid:m.instructorUid, instructorName:m.instructorName, pin, open:true, startedAt:TS, localStart:Date.now(),
-    acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000)});
-  const firstSlot = Math.floor(Date.now() / SLOT_MS);
-  const q = sess.qr = {liveId:w.id, secret, pin, firstSlot, offset:0, codes:new Map(), seen:{}, devices:{}, rejected:[], slot:null, chain:Promise.resolve()};
+    slotMs, endsAt, acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000)});
+  const firstSlot = Math.floor(Date.now() / slotMs);
+  const q = sess.qr = {liveId:w.id, secret, pin, slotMs, endsAt, firstSlot, lastSlot:null, closed:false, offset:0, codes:new Map(), seen:{}, devices:{}, rejected:[], slot:null, chain:Promise.resolve()};
   bg(w.p);
   $('#qrPin').textContent = pin; $('#qrFullPin').textContent = pin;
   $('#qrFullTitle').textContent = `${m.course} — ${m.deptName} — ${m.stage} / ${m.shift}`;
+  $('#qrHint').textContent = `يمسح الطلبة الرمز من داخل التطبيق بعد تسجيل الدخول. يتغيّر الرمز كل ${slotMs / 1000} ثوانٍ.`;
   $('#qrStatus').textContent = App.mode === 'local' ? 'وضع محلي: للتجربة فقط' :
     navigator.onLine ? '' : '⚠ غير متصل: يحفظ الطلبة حضورهم على هواتفهم، وتُضاف أسماؤهم إلى هذه المحاضرة تلقائياً عند توفر الإنترنت.';
   App.subs.live = DB.listenDoc('att_live', q.liveId, d => {
@@ -818,26 +823,67 @@ function startQR(){
   App.subs.checkins = DB.listen(`att_live/${q.liveId}/c`, [], list => { q.chain = q.chain.then(() => handleCheckins(q, list)).catch(console.error); });
   q.timer = setInterval(() => qrTick(q), 1000); qrTick(q);
 }
+const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`; };
 async function qrTick(q){
-  if (!sess || sess.qr !== q) return;
-  const now = Date.now(), slot = Math.floor(now / SLOT_MS), left = SLOT_MS - (now % SLOT_MS);
-  $('#qrBar').style.width = (left / SLOT_MS * 100) + '%';
-  $('#qrFullCount').textContent = `يتغير خلال ${Math.ceil(left / 1000)} ثانية`;
+  if (!sess || sess.qr !== q || q.closed) return;
+  const now = Date.now(), slot = Math.floor(now / q.slotMs), left = q.slotMs - (now % q.slotMs);
+  if (q.endsAt && now >= q.endsAt) return closeQRWindow(q, 'انتهى وقت التسجيل بـ QR');
+  $('#qrWindow').textContent = q.endsAt ? `⏱ يتوقف التسجيل بـ QR خلال ${mmss(q.endsAt - now)}` : '⏱ التسجيل بـ QR مفتوح حتى إنهاء المحاضرة';
+  $('#qrFullWindow').textContent = q.endsAt ? `يتوقف خلال ${mmss(q.endsAt - now)}` : '';
+  $('#qrBar').style.width = (left / q.slotMs * 100) + '%';
+  $('#qrFullCount').textContent = `يتغير خلال ${Math.ceil(left / 1000)} ث`;
   if (slot === q.slot) return;
   q.slot = slot;
   const code = await codeFor(q, slot), text = `${appBase()}?a=${q.liveId}.${slot}.${code}`;
+  if (q.closed) return;
   $('#qrCode').textContent = code; $('#qrFullCode').textContent = code;
   drawQR($('#qrCanvas'), text);
   if ($('#qrFull').classList.contains('show')) drawQR($('#qrFullCanvas'), text);
   q.text = text;
-  for (const k of q.codes.keys()) if (k < slot - 20) q.codes.delete(k);
+  for (const k of q.codes.keys()) if (k < slot - 200) q.codes.delete(k);
 }
+function drawClosed(canvas, msg){
+  const ctx = canvas.getContext('2d'), size = canvas.width;
+  ctx.fillStyle = '#f0f4f8'; ctx.fillRect(0, 0, size, canvas.height);
+  ctx.fillStyle = '#14324f'; ctx.font = `bold ${Math.round(size / 16)}px Cairo, Tahoma`; ctx.textAlign = 'center';
+  ctx.fillText('⏹', size / 2, size / 2 - size / 12); ctx.fillText(msg, size / 2, size / 2 + size / 12);
+}
+function closeQRWindow(q, msg){
+  if (q.closed) return;
+  q.closed = true; q.lastSlot = Math.floor(Date.now() / q.slotMs);
+  clearInterval(q.timer);
+  bg(DB.update('att_live', q.liveId, {open:false, closedAt:TS}).p);
+  $('#qrCode').textContent = '------'; $('#qrFullCode').textContent = ''; $('#qrBar').style.width = '0%';
+  $('#qrWindow').textContent = '⏹ ' + msg + ' — من مسح الرمز قبل التوقف يُقبل حتى لو وصل حضوره متأخراً';
+  $('#qrFullWindow').textContent = msg;
+  drawClosed($('#qrCanvas'), msg); if ($('#qrFull').classList.contains('show')) drawClosed($('#qrFullCanvas'), msg);
+  $('#qrStopBtn').classList.add('hidden'); $('#qrExtendBtn').textContent = '↺ فتح QR مجدداً (+5 دقائق)';
+  beep();
+}
+$('#qrStopBtn').onclick = async () => {
+  const q = sess && sess.qr; if (!q || q.closed) return;
+  if (await confirmBox('إيقاف QR', 'سيتوقف قبول الحضور بـ QR الآن. يبقى التسجيل اليدوي وبصمة الوجه متاحين.', 'إيقاف')) closeQRWindow(q, 'أوقف التدريسي التسجيل بـ QR');
+};
+$('#qrExtendBtn').onclick = () => {
+  const q = sess && sess.qr; if (!q) return;
+  if (q.closed){ // إعادة الفتح
+    q.closed = false; q.lastSlot = null; q.slot = null; q.endsAt = Date.now() + 5 * 60000;
+    bg(DB.update('att_live', q.liveId, {open:true, endsAt:q.endsAt}).p);
+    $('#qrStopBtn').classList.remove('hidden'); $('#qrExtendBtn').textContent = '+5 دقائق';
+    q.timer = setInterval(() => qrTick(q), 1000); qrTick(q);
+    toast('أُعيد فتح التسجيل بـ QR لخمس دقائق', 'ok');
+  } else {
+    q.endsAt = (q.endsAt || Date.now()) + 5 * 60000;
+    bg(DB.update('att_live', q.liveId, {endsAt:q.endsAt}).p); qrTick(q);
+    toast('تم تمديد التسجيل بـ QR خمس دقائق', 'ok');
+  }
+};
 async function handleCheckins(q, list){
   if (!sess || sess.qr !== q) return;
   for (const c of list){
     const at = tsMillis(c.at); if (at == null) continue; // ينتظر وقت الخادم
     const key = c.id + ':' + at; if (q.seen[key]) continue; q.seen[key] = true;
-    const v = await validateCheckin(q, c, at, Math.floor(Date.now() / SLOT_MS));
+    const v = await validateCheckin(q, c, at, q.lastSlot != null ? q.lastSlot : Math.floor(Date.now() / q.slotMs));
     let reason = v.reason;
     if (!reason && !sess.roster.has(c.sid)) reason = 'ليس ضمن هذه الشعبة';
     else if (!reason && q.devices[c.deviceId] && q.devices[c.deviceId] !== c.sid) reason = 'الهاتف نفسه استُخدم لطالب آخر: ' + (sess.names[q.devices[c.deviceId]] || q.devices[c.deviceId]);
@@ -847,17 +893,19 @@ async function handleCheckins(q, list){
     if (st.status === 'absent'){ st.device = c.deviceId; markPresent(c.sid, v.method); }
   }
 }
-// التحقق من تسجيل QR: الرمز يجب أن يطابق الرمز السري لتلك الخانة الزمنية،
+// التحقق من تسجيل QR: الرمز يجب أن يطابق الرمز السري لخانة زمنية ضمن وقت التسجيل،
 // وإما أن يصل حياً خلال ~٢٠ ثانية (وقت الخادم)، أو يكون مسجّلاً على الهاتف دون اتصال بوقت مسح مطابق لوقت الرمز
 async function validateCheckin(q, c, at, lastSlot){
-  const slot = +c.slot, code = String(c.code || '');
-  if (!(slot >= q.firstSlot - 1 && slot <= lastSlot + 1) || code !== await codeFor(q, slot)) return {reason:'رمز غير صحيح'};
-  if (at != null){
-    const sLocal = Math.floor((at - q.offset) / SLOT_MS);
-    if (sLocal - slot <= QR_GRACE_SLOTS && sLocal - slot >= -1) return {method:'qr'};
+  const code = String(c.code || ''), ms = q.slotMs || SLOT_MS, inRange = s => s >= q.firstSlot - 1 && s <= lastSlot + 1;
+  const grace = Math.max(1, Math.ceil(QR_GRACE_MS / ms));
+  if (at != null){ // حيّ: بحسب وقت الخادم (لا يعتمد على ساعة هاتف الطالب)
+    const sNow = Math.floor((at - q.offset) / ms);
+    for (let s = sNow + 1; s >= sNow - grace; s--) if (inRange(s) && code === await codeFor(q, s)) return {method:'qr'};
   }
+  const slot = +c.slot;
+  if (!inRange(slot) || code !== await codeFor(q, slot)) return {reason: at != null ? 'رمز غير صحيح أو منتهي الصلاحية' : 'رمز غير صحيح'};
   const cap = +c.capturedAt || 0;
-  if (Math.abs(cap - (slot * SLOT_MS + SLOT_MS / 2)) <= QR_CAPTURE_TOL) return {method:'qr-off'};
+  if (Math.abs(cap - (slot * ms + ms / 2)) <= QR_CAPTURE_TOL) return {method:'qr-off'};
   return {reason:'رمز منتهي الصلاحية'};
 }
 function renderRejected(q){
@@ -867,7 +915,8 @@ function renderRejected(q){
 function stopQR(){
   const q = sess && sess.qr; if (!q) return;
   clearInterval(q.timer); unsub('live'); unsub('checkins');
-  bg(DB.update('att_live', q.liveId, {open:false, closedAt:TS}).p);
+  if (!q.closed) bg(DB.update('att_live', q.liveId, {open:false, closedAt:TS}).p);
+  $('#qrStopBtn').classList.remove('hidden'); $('#qrExtendBtn').textContent = '+5 دقائق'; $('#qrWindow').textContent = '';
   $('#qrFull').classList.remove('show'); sess.qr = null;
 }
 $('#qrFullBtn').onclick = () => {
@@ -974,7 +1023,8 @@ $('#finishBtn').onclick = async () => {
     names, createdAt:nowISO(), appVersion:APP_VERSION
   });
   if (sess.qr){ // لإضافة طلبة QR الذين يرفعون حضورهم لاحقاً (دون اتصال)
-    Object.assign(rec, {liveId:sess.qr.liveId, qrSecret:sess.qr.secret, qrFrom:sess.qr.firstSlot, qrTo:Math.floor(Date.now() / SLOT_MS),
+    const q = sess.qr;
+    Object.assign(rec, {liveId:q.liveId, qrSecret:q.secret, qrSlotMs:q.slotMs, qrFrom:q.firstSlot, qrTo:q.lastSlot != null ? q.lastSlot : Math.floor(Date.now() / q.slotMs),
       acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000).toISOString(), qrLate:0});
   }
   const w = DB.set('att_sessions', null, rec);
@@ -1371,6 +1421,7 @@ async function enterStudent(st){
   stConn(); $('#stResult').innerHTML = ''; renderQueue(); flushQueue();
   const pend = sessionStorage.getItem('fa_pending');
   if (pend){ sessionStorage.removeItem('fa_pending'); submitFromText(pend); }
+  else if (inAppBrowser()){ $('#scanBtn').classList.remove('hidden'); camFail('inapp'); }
   else startScan(); // تفتح الكاميرا مباشرة بعد الدخول
 }
 function stConn(){ const el = $('#stConn'); el.textContent = navigator.onLine ? 'متصل ✓' : 'غير متصل'; el.className = 'pill ' + (navigator.onLine ? 'ok' : 'err'); }
@@ -1445,18 +1496,56 @@ $('#mSend').onclick = async () => {
   try{
     const list = await FS.query('att_live', [['pin', pin], ['open', true]]);
     if (!list.length) return stResult('لا توجد محاضرة مفتوحة بهذا الرقم', 'err');
-    submitCheckin(list[0].id, Math.floor(Date.now() / SLOT_MS), code);
+    submitCheckin(list[0].id, Math.floor(Date.now() / (list[0].slotMs || SLOT_MS)), code);
   }catch(e){ stResult('تعذّر البحث عن المحاضرة: ' + fbErr(e), 'err'); }
 };
 $('#scanBtn').onclick = () => startScan();
+const inAppBrowser = () => /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|Line\/|Telegram|Snapchat|MicroMessenger|TikTok|; wv\)/i.test(navigator.userAgent);
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent);
+function camHelp(html){ const el = $('#camHelp'); el.innerHTML = html || ''; el.classList.toggle('hidden', !html); }
 async function startScan(){
   if (scanOn) return;
-  $('#scanBtn').classList.add('hidden');
-  try{
-    scanStream = await navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:'environment'}}});
-    const v = $('#scanVideo'); v.srcObject = scanStream; await v.play();
-    $('#scanArea').classList.remove('hidden'); scanOn = true; $('#stResult').innerHTML = ''; scanLoop();
-  }catch(e){ $('#scanBtn').classList.remove('hidden'); stResult('تعذّر تشغيل الكاميرا — اضغط "مسح رمز الحضور" واسمح للمتصفح باستخدامها، أو أدخل الرمز يدوياً', 'err'); }
+  camHelp(''); $('#scanBtn').classList.add('hidden');
+  if (!window.isSecureContext) return camFail('insecure');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return camFail(inAppBrowser() ? 'inapp' : 'unsupported');
+  const tries = [
+    {audio:false, video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}},
+    {audio:false, video:{facingMode:'environment'}},
+    {audio:false, video:true}];
+  let err = null; scanStream = null;
+  for (const c of tries){
+    try{ scanStream = await navigator.mediaDevices.getUserMedia(c); break; }
+    catch(e){ err = e; console.warn('camera', e.name, e.message); if (e.name === 'NotAllowedError' || e.name === 'SecurityError') break; }
+  }
+  if (!scanStream) return camFail(err && err.name, err);
+  if (!(await ensureQRDecoder())){ // آيفون لا يملك قارئ QR مدمجاً في المتصفح، فيحتاج مكتبة jsQR
+    scanStream.getTracks().forEach(t => t.stop()); scanStream = null;
+    return camFail('nodecoder');
+  }
+  const v = $('#scanVideo'); v.setAttribute('playsinline', ''); v.setAttribute('muted', ''); v.muted = true; v.srcObject = scanStream;
+  $('#scanArea').classList.remove('hidden');
+  try{ await v.play(); }
+  catch(e){ stopScan(); camHelp('اضغط زر <b>"تشغيل الكاميرا ومسح رمز الحضور"</b> لبدء المسح.'); return; }
+  scanOn = true; $('#stResult').innerHTML = ''; scanLoop();
+}
+function camFail(kind, e){
+  stopScan();
+  const perm = isIOS()
+    ? 'افتح <b>الإعدادات ← Safari ← الكاميرا ← سماح</b>، أو اضغط <b>ᴬA</b> في شريط العنوان ← إعدادات موقع الويب ← الكاميرا ← سماح، ثم أعد تحميل الصفحة.'
+    : 'اضغط على <b>🔒 أو ⓘ</b> بجانب الرابط في الأعلى ← <b>الأذونات</b> ← <b>الكاميرا</b> ← <b>سماح</b>، ثم أعد تحميل الصفحة. (للتطبيق المثبّت: اضغط مطولاً على أيقونته ← معلومات التطبيق ← الأذونات ← الكاميرا).';
+  const msgs = {
+    inapp:'⚠ فتحت الرابط من داخل تطبيق (واتساب أو تلغرام أو فيسبوك...)، وهذه المتصفحات الداخلية تمنع الكاميرا.<br>اضغط <b>⋮</b> أو <b>…</b> أعلى الشاشة ← <b>فتح في Chrome</b> (أندرويد) أو <b>فتح في Safari</b> (آيفون)، ثم ثبّت التطبيق.',
+    insecure:'⚠ يجب فتح النظام عبر رابط يبدأ بـ https.',
+    unsupported:'⚠ هذا المتصفح لا يدعم الكاميرا. استخدم <b>Chrome</b> على أندرويد أو <b>Safari</b> على الآيفون.',
+    NotAllowedError:'⚠ تم رفض إذن الكاميرا.<br>' + perm,
+    SecurityError:'⚠ المتصفح منع الكاميرا.<br>' + perm,
+    NotFoundError:'⚠ لم يُعثر على كاميرا في هذا الجهاز.',
+    nodecoder:'⚠ تعذّر تحميل قارئ رمز QR (يحتاج إنترنت عند أول استخدام). اتصل بالإنترنت ثم اضغط الزر مجدداً — بعدها يعمل دون اتصال.',
+    NotReadableError:'⚠ الكاميرا مستخدمة من تطبيق آخر. أغلق تطبيقات الكاميرا والاتصال المرئي (واتساب، زووم...) ثم اضغط الزر مجدداً.',
+    AbortError:'⚠ توقفت الكاميرا. اضغط الزر مجدداً.',
+    OverconstrainedError:'⚠ تعذّر تشغيل الكاميرا بالإعدادات المطلوبة. اضغط الزر مجدداً.'
+  };
+  camHelp((msgs[kind] || ('⚠ تعذّر تشغيل الكاميرا' + (e ? ` (${esc(e.name)})` : ''))) + '<br><span class="note">يمكنك أيضاً إدخال الرمز يدوياً من الأسفل.</span>');
 }
 function stopScan(){
   scanOn = false; if (scanStream){ scanStream.getTracks().forEach(t => t.stop()); scanStream = null; }
@@ -1467,20 +1556,37 @@ $('#scanStop').onclick = stopScan;
 let barcodeDetector = null;
 try{ if ('BarcodeDetector' in window) barcodeDetector = new BarcodeDetector({formats:['qr_code']}); }catch(e){ barcodeDetector = null; }
 const scanCanvas = document.createElement('canvas');
+const JSQR_SOURCES = ['https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js', 'https://unpkg.com/jsqr@1.4.0/dist/jsQR.js', 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js'];
+function loadScript(src, ms=8000){
+  return new Promise(res => {
+    const el = document.createElement('script'); el.src = src; el.async = true;
+    const t = setTimeout(() => { el.remove(); res(false); }, ms);
+    el.onload = () => { clearTimeout(t); res(true); }; el.onerror = () => { clearTimeout(t); el.remove(); res(false); };
+    document.head.appendChild(el);
+  });
+}
+async function ensureQRDecoder(){
+  if (barcodeDetector || typeof jsQR !== 'undefined') return true;
+  for (const src of JSQR_SOURCES){ if (await loadScript(src) && typeof jsQR !== 'undefined') return true; }
+  return false;
+}
 async function scanLoop(){
   if (!scanOn) return;
   const v = $('#scanVideo'); let text = null;
   if (v.readyState >= 2 && !scanBusy){
     scanBusy = true;
     try{
-      if (barcodeDetector){ const r = await barcodeDetector.detect(v); if (r.length) text = r[0].rawValue; }
+      if (barcodeDetector){
+        try{ const r = await barcodeDetector.detect(v); if (r.length) text = r[0].rawValue; }
+        catch(e){ console.warn('BarcodeDetector', e); barcodeDetector = null; } // يتحول إلى jsQR
+      }
       else if (typeof jsQR !== 'undefined'){
         const w = v.videoWidth, h = v.videoHeight, sc = Math.min(1, 640 / Math.max(w, h));
         scanCanvas.width = Math.round(w * sc); scanCanvas.height = Math.round(h * sc);
         const ctx = scanCanvas.getContext('2d', {willReadFrequently:true}); ctx.drawImage(v, 0, 0, scanCanvas.width, scanCanvas.height);
         const img = ctx.getImageData(0, 0, scanCanvas.width, scanCanvas.height), r = jsQR(img.data, img.width, img.height);
         if (r) text = r.data;
-      } else { stopScan(); return stResult('ماسح QR غير متاح على هذا المتصفح — امسح الرمز بكاميرا الهاتف أو أدخله يدوياً', 'err'); }
+      } else { stopScan(); return camFail('nodecoder'); }
     }catch(e){ console.error(e); }
     scanBusy = false;
   }

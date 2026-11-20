@@ -1,5 +1,5 @@
 {
-  "name": "حضور الطلبة ببصمة الوجه — جامعة السراج",
+  "name": "نظام حضور الطلبة — جامعة السراج",
   "short_name": "حضور الطلبة",
   "description": "نظام حضور الطلبة ببصمة الوجه — قسم هندسة تقنيات الذكاء الاصطناعي، جامعة السراج",
   "lang": "ar",
@@ -9,9 +9,37 @@
   "display": "standalone",
   "orientation": "any",
   "background_color": "#f3f6f9",
-  "theme_color": "#14324f",
+  "theme_color": "#0b2038",
   "icons": [
-    {"src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
-    {"src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
   ]
 }

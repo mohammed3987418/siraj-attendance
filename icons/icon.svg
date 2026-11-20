@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b4f7a"/>
+      <stop offset="1" stop-color="#0b2038"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.3" cy="0.2" r="0.8">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="scan" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34e3a0" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#34e3a0" stop-opacity="1"/>
+      <stop offset="1" stop-color="#34e3a0" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3ee6a4"/>
+      <stop offset="1" stop-color="#12a86b"/>
+    </linearGradient>
+    <clipPath id="faceClip"><rect x="150" y="128" width="212" height="240"/></clipPath>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000" flood-opacity="0.35"/></filter>
+  </defs>
+  <g id="art">
+    <rect id="bgRect" x="0" y="0" width="512" height="512" rx="112" fill="url(#bg)"/>
+    <rect x="0" y="0" width="512" height="512" rx="112" fill="url(#glow)"/>
+    <!-- scan frame corners -->
+    <g fill="none" stroke="#34e3a0" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M112 186 V140 a28 28 0 0 1 28 -28 H186"/>
+      <path d="M326 112 H372 a28 28 0 0 1 28 28 V186"/>
+      <path d="M112 326 V372 a28 28 0 0 0 28 28 H186"/>
+    </g>
+    <!-- person -->
+    <g fill="#ffffff">
+      <circle cx="256" cy="214" r="62"/>
+      <path d="M150 368 C150 306 198 286 256 286 C314 286 362 306 362 368 Z"/>
+    </g>
+    <!-- scan line -->
+    <rect x="128" y="246" width="256" height="9" rx="4.5" fill="url(#scan)" opacity="0.95"/>
+    <!-- check badge -->
+    <g filter="url(#sh)">
+      <circle cx="366" cy="366" r="70" fill="url(#badge)" stroke="#0b2038" stroke-width="12"/>
+      <path d="M334 367 L357 390 L400 345" fill="none" stroke="#ffffff" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>
