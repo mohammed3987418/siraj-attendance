@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
+<meta name="app-version" content="3.9.1">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -172,7 +173,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <!-- ============ التطبيق ============ -->
 <div id="appView" class="hidden">
 <header>
-  <div><h1>نظام حضور الطلبة ببصمة الوجه</h1><small>جامعة السراج</small></div>
+  <div><h1>نظام حضور الطلبة ببصمة الوجه</h1><small>جامعة السراج — الإصدار 3.9.1</small></div>
   <div class="hdr">
     <span id="conn" class="pill"></span>
     <span id="modelStatus" class="pill">جارٍ التحضير...</span>
@@ -576,6 +577,6 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js"></script>
+<script src="app.js?v=3.9.1"></script>
 </body>
 </html>

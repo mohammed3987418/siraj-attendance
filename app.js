@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '3.9.0';
+const APP_VERSION = '3.9.1';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -34,7 +34,29 @@ const DEFAULT_ORG = {
 const normRole = r => r === 'admin' ? 'super' : r;
 
 /* ============ أدوات عامة ============ */
-const $ = s => document.querySelector(s);
+// عنصر بديل عند غياب عنصر في الصفحة (مثلاً عند رفع ملفات من إصدارين مختلفين) حتى لا يتوقف التطبيق كله
+const NULL_EL = document.createElement('div');
+const $ = s => document.querySelector(s) || NULL_EL;
+// إظهار أي خطأ برمجي على الشاشة لتسهيل التشخيص
+window.addEventListener('error', e => showFatal((e.message || 'خطأ') + (e.filename ? ` (${e.filename.split('/').pop()}:${e.lineno})` : '')));
+window.addEventListener('unhandledrejection', e => { const m = e.reason && (e.reason.message || e.reason.code); if (m && !/permission|network|offline|unavailable|timeout/i.test(m)) console.warn('rejection', e.reason); });
+function showFatal(msg){
+  let b = document.getElementById('fatalBar');
+  if (!b){ b = document.createElement('div'); b.id = 'fatalBar';
+    b.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:200;background:#c0392b;color:#fff;padding:8px 14px;font:14px Tahoma;direction:rtl';
+    document.body.appendChild(b); }
+  b.innerHTML = `⚠ خطأ في التطبيق (الإصدار ${APP_VERSION}): ${String(msg).replace(/</g, '&lt;')} — <a href="#" style="color:#fff;text-decoration:underline" onclick="location.reload();return false">إعادة التحميل</a>`;
+}
+// التأكد أن ملفات الصفحة والتطبيق من الإصدار نفسه، وإلا تُحدَّث تلقائياً مرة واحدة
+(function versionGuard(){
+  const pageVer = (document.querySelector('meta[name=app-version]') || {}).content;
+  if (pageVer === APP_VERSION) { try{ sessionStorage.removeItem('fa_vfix'); }catch(e){} return; }
+  let tried = false; try{ tried = sessionStorage.getItem('fa_vfix') === APP_VERSION; sessionStorage.setItem('fa_vfix', APP_VERSION); }catch(e){}
+  if (!tried){
+    Promise.resolve(window.caches ? caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('att-app')).map(k => caches.delete(k)))) : 0)
+      .finally(() => location.reload());
+  } else setTimeout(() => showFatal(`ملفات الصفحة (${pageVer || 'قديمة'}) لا تطابق ملف التطبيق (${APP_VERSION}). ارفع كل ملفات الإصدار نفسه إلى GitHub، ثم أعد التحميل.`), 500);
+})();
 const $$ = s => [...document.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const LS = {

@@ -1,7 +1,7 @@
 /* Service Worker — يجعل التطبيق يعمل دون إنترنت بعد أول فتح */
-const VERSION = 'att-app-v3.9.0';      // غيّر الرقم عند كل تحديث لملفات التطبيق
+const VERSION = 'att-app-v3.9.1';      // غيّر الرقم عند كل تحديث لملفات التطبيق
 const CDN_CACHE = 'att-cdn-v1';        // المكتبات ونماذج الوجه (~10MB) لا تُحذف عند التحديث
-const CORE = ['./', './index.html', './app.js', './firebase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-192.png', './icons/maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-64.png', './icons/icon.svg'];
+const CORE = ['./', './index.html', './app.js?v=3.9.1', './firebase-config.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-192.png', './icons/maskable-512.png', './icons/apple-touch-icon.png', './icons/favicon-64.png', './icons/icon.svg'];
 const CDN_HOSTS = ['cdn.jsdelivr.net', 'unpkg.com', 'cdnjs.cloudflare.com', 'www.gstatic.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', e => {
@@ -16,7 +16,7 @@ self.addEventListener('activate', e => {
 async function networkFirst(req){
   const cache = await caches.open(VERSION);
   try{
-    const res = await Promise.race([fetch(req), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
+    const res = await Promise.race([fetch(req.mode === 'navigate' ? req : new Request(req, {cache:'no-cache'})), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
     if (res && res.ok) cache.put(req, res.clone());
     return res;
   }catch(err){
