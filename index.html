@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="3.9.1">
+<meta name="app-version" content="4.0.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -103,6 +103,11 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .result{padding:14px;border-radius:10px;font-weight:700;text-align:center;margin-top:10px}
 .result.ok{background:#e5f6ee;color:var(--green)}.result.err{background:#fdecea;color:var(--red)}.result.info{background:#e6eef7;color:var(--navy2)}
 .b-qr{background:#e6eef7;color:var(--navy2)}
+.b-w1{background:#fff4d6;color:#8a6100}.b-w2{background:#ffe2c2;color:#a04800}.b-dep{background:#c0392b;color:#fff}
+.kpi .stat b{font-size:26px}
+.chip{border:1px solid var(--line);background:#f6f9fc;border-radius:10px;padding:8px 12px;cursor:pointer;font:inherit;text-align:right}
+.chip:hover{border-color:var(--green);background:#eef9f3}
+.xs-img{max-width:60px;max-height:60px;border-radius:6px;cursor:zoom-in}
 #gBody input{width:72px;text-align:center;padding:5px}
 #gBody input.bad{border-color:var(--red);background:#fdecea}
 #gBody input.auto{background:#eef6f1}
@@ -111,6 +116,48 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .spot{display:flex;gap:12px;align-items:center;justify-content:space-between;background:#f0f4f8;border-radius:12px;padding:10px 14px;font-size:20px;font-weight:700}
 .spot img{width:64px;height:64px;border-radius:50%;object-fit:cover;transform:scaleX(-1)}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+</style>
+<style>
+body{background:#eef2f6}
+#appView{display:flex;min-height:100vh}
+#appView.hidden{display:none!important}
+#sidebar{width:250px;flex:0 0 250px;background:linear-gradient(180deg,#0b2038,#153a5c);color:#dbe6f1;display:flex;flex-direction:column;position:sticky;top:0;height:100vh;box-shadow:-2px 0 12px rgba(0,0,0,.12);z-index:40}
+.sb-brand{display:flex;gap:10px;align-items:center;padding:18px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sb-brand img{width:44px;height:44px;border-radius:12px}
+.sb-brand b{display:block;color:#fff;font-size:15px}.sb-brand small{opacity:.7}
+#sidebar nav{display:flex;flex-direction:column;gap:2px;padding:12px 10px;background:none;border:0;flex:1;overflow:auto}
+#sidebar nav button{display:flex;align-items:center;gap:12px;border:0;background:none;color:#c4d3e2;font:inherit;font-weight:600;padding:11px 14px;border-radius:10px;cursor:pointer;text-align:right;border-bottom:0}
+#sidebar nav button svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 20px}
+#sidebar nav button:hover{background:rgba(255,255,255,.07);color:#fff}
+#sidebar nav button.active{background:#2ecc71;color:#0b2038;box-shadow:0 4px 12px rgba(46,204,113,.3)}
+.sb-foot{padding:14px;border-top:1px solid rgba(255,255,255,.08);display:flex;flex-direction:column;gap:10px}
+.sb-user{display:flex;gap:10px;align-items:center}.sb-user b{display:block;color:#fff;font-size:14px}.sb-user small{opacity:.7;font-size:12px}
+.sb-av{width:36px;height:36px;border-radius:50%;background:#2ecc71;color:#0b2038;display:flex;align-items:center;justify-content:center;font-weight:700}
+.sb-pills{display:flex;flex-wrap:wrap;gap:6px}.sb-pills .pill{font-size:11px}
+.sb-ver{opacity:.5;font-size:11px}
+.main-col{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{position:sticky;top:0;z-index:30;background:#fff;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px;padding:10px 20px;flex-wrap:wrap}
+.topbar h1{margin:0;font-size:20px;color:var(--navy);flex:1}
+.topbar .scope{border:0;padding:0;background:none;gap:8px}
+.topbar .scope label{margin:0;color:var(--muted);font-size:13px}
+.topbar .scope select{min-width:170px}
+.topbar .term{background:#eef6f1;color:var(--green);padding:5px 12px;border-radius:20px;font-size:13px;font-weight:600}
+#menuBtn{display:none;border:0;background:#eef2f6;border-radius:10px;font-size:22px;width:42px;height:42px;cursor:pointer}
+#sbShade{display:none}
+#appView main{max-width:none;margin:0;width:100%;box-sizing:border-box;padding:20px}
+html,body{overflow-x:hidden}
+.tbl-wrap{overflow:auto;max-width:100%}
+@media(max-width:900px){
+  #appView{display:block}
+  .main-col{width:100%}
+  #appView main{padding:12px}
+  .topbar{padding:10px 12px}
+  #sidebar{position:fixed;right:0;top:0;transform:translateX(100%);transition:transform .25s}
+  #appView.sb-open #sidebar{transform:none}
+  #appView.sb-open #sbShade{display:block;position:fixed;inset:0;background:rgba(10,25,40,.45);z-index:35}
+  #menuBtn{display:block}
+  .topbar .scope{width:100%}.topbar .scope select{min-width:0;flex:1}
+}
 </style>
 </head>
 <body>
@@ -165,6 +212,20 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
       <button class="btn" id="mSend" style="margin-top:8px;width:100%">إرسال</button>
     </details>
   </div>
+  <div class="card" id="stAttCard"><div class="row" style="justify-content:space-between"><h2 style="margin:0">📊 حضوري</h2><button class="btn sm light" id="stAttLoad">↻ تحديث</button></div><div id="stAtt" style="margin-top:8px" class="note">اضغط تحديث</div></div>
+  <div class="card" id="stResCard"><div class="row" style="justify-content:space-between"><h2 style="margin:0">🎓 درجاتي</h2><button class="btn sm light" id="stResLoad">↻ تحديث</button></div><div id="stRes" style="margin-top:8px" class="note">اضغط تحديث</div></div>
+  <div class="card" id="stExCard">
+    <h2>📄 تقديم عذر غياب</h2>
+    <div class="grid" style="grid-template-columns:1fr 1fr">
+      <div><label>من تاريخ</label><input id="xFrom" type="date"></div>
+      <div><label>إلى تاريخ</label><input id="xTo" type="date"></div>
+      <div style="grid-column:1/-1"><label>المادة (اتركها لكل المواد)</label><input id="xCourse" placeholder="كل المواد"></div>
+      <div style="grid-column:1/-1"><label>السبب</label><input id="xReason" placeholder="مثال: مرض، ظرف عائلي..."></div>
+      <div style="grid-column:1/-1"><label>صورة المستند (تقرير طبي...)</label><input id="xFile" type="file" accept="image/*"></div>
+    </div>
+    <button class="btn green" id="xSend" style="width:100%;margin-top:10px">إرسال العذر</button>
+    <div id="xList" style="margin-top:10px"></div>
+  </div>
   <p class="note" style="text-align:center">بعد الإرسال تأكد من ظهور اسمك على شاشة التدريسي.</p>
   <p class="note" style="text-align:center;opacity:.7" id="stVer"></p>
 </div>
@@ -172,36 +233,54 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 
 <!-- ============ التطبيق ============ -->
 <div id="appView" class="hidden">
-<header>
-  <div><h1>نظام حضور الطلبة ببصمة الوجه</h1><small>جامعة السراج — الإصدار 3.9.1</small></div>
-  <div class="hdr">
-    <span id="conn" class="pill"></span>
-    <span id="modelStatus" class="pill">جارٍ التحضير...</span>
-    <span id="userBox" class="pill"></span>
-    <button id="installBtn" class="btn sm light hidden">⬇ تثبيت التطبيق</button>
-    <button id="logoutBtn" class="btn sm light hidden">خروج</button>
+<aside id="sidebar">
+  <div class="sb-brand"><img src="icons/icon-192.png" alt=""><div><b>نظام الحضور والدرجات</b><small>جامعة السراج</small></div></div>
+  <nav>
+    <button data-tab="tStudents"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>الطلبة والبصمات</span></button>
+    <button data-tab="tSession"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="10" r="3"/><path d="M7 17a5 5 0 0 1 10 0"/></svg><span>أخذ الحضور</span></button>
+    <button data-tab="tRecords"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg><span>السجلات والإنذارات</span></button>
+    <button data-tab="tExcuses"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg><span>الأعذار</span></button>
+    <button data-tab="tSchedule"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h3M8 18h6"/></svg><span>الجدول الأسبوعي</span></button>
+    <button data-tab="tGrades"><svg viewBox="0 0 24 24"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg><span>اللجنة الامتحانية</span></button>
+    <button data-tab="tQA"><svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg><span>ضمان الجودة</span></button>
+    <button data-tab="tUsers"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>المستخدمون</span></button>
+    <button data-tab="tOrg"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V10l7-5 7 5v11"/><path d="M9 21v-6h6v6"/></svg><span>الهيكل التنظيمي</span></button>
+    <button data-tab="tSettings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>الإعدادات</span></button>
+  </nav>
+  <div class="sb-foot">
+    <div class="sb-user"><div class="sb-av" id="sbAv">م</div><div><b id="userBox"></b><small id="roleBox"></small></div></div>
+    <div class="sb-pills"><span id="conn" class="pill"></span><span id="modelStatus" class="pill">جارٍ التحضير...</span></div>
+    <div class="row"><button id="installBtn" class="btn sm light hidden">⬇ تثبيت</button><button id="logoutBtn" class="btn sm light hidden">⎋ خروج</button></div>
+    <small class="sb-ver" id="sbVer"></small>
+  </div>
+</aside>
+<div id="sbShade"></div>
+<div class="main-col">
+<header class="topbar">
+  <button id="menuBtn" aria-label="القائمة">☰</button>
+  <h1 id="pageTitle"></h1>
+  <div class="scope">
+    <label>الكلية</label><select id="scopeCollege"></select>
+    <label>القسم</label><select id="scopeDept"></select>
+    <span class="term" id="termBox"></span>
   </div>
 </header>
-<div class="scope">
-  <b>الكلية:</b><select id="scopeCollege"></select>
-  <b>القسم:</b><select id="scopeDept"></select>
-  <span class="note" id="termBox"></span>
-</div>
-<nav>
-  <button data-tab="tStudents">الطلبة والبصمات</button>
-  <button data-tab="tSession">أخذ الحضور</button>
-  <button data-tab="tRecords">السجلات والتقارير</button>
-  <button data-tab="tGrades">اللجنة الامتحانية</button>
-  <button data-tab="tUsers">المستخدمون</button>
-  <button data-tab="tOrg">الهيكل التنظيمي</button>
-  <button data-tab="tSettings">الإعدادات</button>
-</nav>
 <main>
 <div id="localBanner" class="banner hidden">⚠ وضع تجريبي محلي: لم تُضَف إعدادات Firebase في ملف <b>firebase-config.js</b>، لذلك تُحفظ البيانات على هذا الجهاز فقط.</div>
 <div id="noDeptBanner" class="banner hidden">لا توجد أقسام مرتبطة بحسابك بعد. راجع مدير النظام أو عميد الكلية.</div>
 
 <!-- الطلبة -->
 <section id="tStudents" class="tab">
+  <div class="card" id="promoCard">
+    <h2>ترحيل الطلبة (نهاية السنة الدراسية)</h2>
+    <div class="row">
+      <label style="margin:0;color:#1c2733">من المرحلة</label><select id="prFrom" class="optStage" style="width:auto"></select>
+      <label style="margin:0;color:#1c2733">الدراسة</label><select id="prShift" class="optShift" style="width:auto"></select>
+      <label style="margin:0;color:#1c2733">إلى</label><select id="prTo" style="width:auto"></select>
+      <button class="btn amber" id="prRun">⇧ ترحيل</button>
+    </div>
+    <p class="note">يُنقل كل طلبة المرحلة مع حساباتهم وبصماتهم. ابدأ بالمرحلة الأخيرة ("تخرّج" يحذفهم من القوائم فقط، وسجلاتهم السابقة تبقى). لترك راسب في مرحلته احذفه من القائمة المرحَّلة لاحقاً وأعد إضافته.</p>
+  </div>
   <div class="card">
     <h2>إضافة طالب إلى <span class="deptName"></span></h2>
     <div class="grid">
@@ -244,6 +323,11 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 
 <!-- الحضور -->
 <section id="tSession" class="tab">
+  <div class="card" id="todayCard">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">📅 محاضراتي اليوم</h2><button class="btn light sm" id="prefetchBtn">📥 تجهيز هذا الجهاز للعمل دون اتصال</button></div>
+    <div id="todayList" class="row" style="margin-top:8px"></div>
+    <div id="prefetchOut" class="note"></div>
+  </div>
   <div class="card" id="sessionSetup">
     <h2>بيانات المحاضرة — <span class="deptName"></span></h2>
     <div class="grid">
@@ -314,6 +398,28 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 
 <!-- السجلات -->
 <section id="tRecords" class="tab">
+  <div class="card" id="policyCard">
+    <h2>نسب الغياب المعتمدة — <span class="deptName"></span></h2>
+    <p class="note">يحددها رئيس القسم حسب تعليمات الجامعة. النسبة = ساعات الغياب ÷ ساعات المادة المنعقدة. الغياب بعذر مقبول لا يُحسب في نسبة "بدون عذر".</p>
+    <div class="grid">
+      <div><label>الإنذار الأول عند (بدون عذر) %</label><input id="pW1" type="number" min="0" max="100" step="0.5"></div>
+      <div><label>الإنذار الثاني عند (بدون عذر) %</label><input id="pW2" type="number" min="0" max="100" step="0.5"></div>
+      <div><label>الحرمان عند (بدون عذر) %</label><input id="pDep" type="number" min="0" max="100" step="0.5"></div>
+      <div><label>الحرمان عند (الغياب الكلي مع العذر) %</label><input id="pDepT" type="number" min="0" max="100" step="0.5"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="pSave">حفظ النسب</button><span class="note" id="pNote"></span></div>
+  </div>
+  <div class="card" id="warnCard">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">الإنذارات والحرمان — <span class="deptName"></span></h2>
+      <div class="row">
+        <select id="wFilter" style="width:auto"><option value="">كل الحالات</option><option value="w1">إنذار أول</option><option value="w2">إنذار ثانٍ</option><option value="dep">محروم</option></select>
+        <button class="btn light" id="wLetters">🖨 كتب الإنذار والحرمان</button>
+        <button class="btn light" id="wExport">⬇ Excel</button>
+      </div>
+    </div>
+    <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>المادة</th><th>المرحلة / الدراسة</th><th>المنعقدة</th><th>غياب</th><th>بعذر</th><th>بدون عذر %</th><th>الكلي %</th><th>الحالة</th><th></th></tr></thead><tbody id="wBody"></tbody></table></div>
+  </div>
   <div class="card" id="overviewCard">
     <h2>تقرير الحضور على مستوى الكليات والأقسام</h2>
     <div class="row" style="margin-bottom:10px">
@@ -395,6 +501,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
         <button class="btn amber" id="gSubmit">📤 إرسال إلى رئيس القسم</button>
         <button class="btn green hidden" id="gApprove">✓ مصادقة</button>
         <button class="btn red hidden" id="gReturn">↩ إعادة إلى التدريسي</button>
+        <button class="btn green hidden" id="gPublish" title="يرى كل طالب درجاته في حسابه">📢 نشر النتائج للطلبة</button>
       </div>
     </div>
     <p class="note" id="gNote"></p>
@@ -414,6 +521,73 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 </section>
 
 <!-- (ماستر شيت داخل تبويب اللجنة) -->
+<!-- الأعذار -->
+<section id="tExcuses" class="tab">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <h2 style="margin:0">أعذار الغياب — <span class="deptName"></span></h2>
+      <div class="row"><select id="exFilter" style="width:auto"><option value="pending">بانتظار القرار</option><option value="approved">مقبولة</option><option value="rejected">مرفوضة</option><option value="">الكل</option></select><button class="btn light" id="exRefresh">↻ تحديث</button></div>
+    </div>
+    <p class="note">يرفع الطالب عذره من حسابه. العذر المقبول يجعل غيابه خلال المدة المحددة "بعذر"، فلا يُحسب في نسبة الغياب بدون عذر.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>الطالب</th><th>المرحلة / الدراسة</th><th>المادة</th><th>من</th><th>إلى</th><th>السبب</th><th>المستند</th><th>الحالة</th><th></th></tr></thead><tbody id="exBody"></tbody></table></div>
+  </div>
+</section>
+
+<!-- الجدول الأسبوعي -->
+<section id="tSchedule" class="tab">
+  <div class="card" id="schFormCard">
+    <h2>الجدول الأسبوعي — <span class="deptName"></span></h2>
+    <div class="grid">
+      <div><label>اليوم</label><select id="scDay"><option value="6">السبت</option><option value="0">الأحد</option><option value="1">الاثنين</option><option value="2">الثلاثاء</option><option value="3">الأربعاء</option><option value="4">الخميس</option><option value="5">الجمعة</option></select></div>
+      <div><label>من</label><input id="scFrom" type="time" value="08:30"></div>
+      <div><label>إلى</label><input id="scTo" type="time" value="10:30"></div>
+      <div><label>المادة</label><input id="scCourse" list="crsNames"></div>
+      <div><label>المرحلة</label><select id="scStage" class="optStage"></select></div>
+      <div><label>الدراسة</label><select id="scShift" class="optShift"></select></div>
+      <div><label>الشعبة</label><select id="scSection" class="optSection" data-all="كل الشعب"></select></div>
+      <div><label>النوع</label><select id="scType"><option>نظري</option><option>عملي</option></select></div>
+      <div><label>التدريسي</label><select id="scInstr"></select></div>
+      <div><label>القاعة</label><input id="scRoom"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn" id="scAdd">إضافة / تعديل</button><button class="btn light" id="scClear">تفريغ</button><span class="note" id="scNote"></span></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">المحاضرات الأسبوعية</h2><button class="btn light" id="scExport">⬇ Excel</button></div>
+    <div class="tbl-wrap" style="margin-top:8px"><table><thead><tr><th>اليوم</th><th>الوقت</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>النوع</th><th>التدريسي</th><th>القاعة</th><th></th></tr></thead><tbody id="scBody"></tbody></table></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">محاضرات لم يُسجَّل حضورها</h2><button class="btn light" id="msgMissing">↻ فحص</button></div>
+    <p class="note">من بداية الفصل حتى أمس، حسب الجدول الأسبوعي.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>اليوم</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>التدريسي</th></tr></thead><tbody id="missBody"></tbody></table></div>
+  </div>
+</section>
+
+<!-- ضمان الجودة -->
+<section id="tQA" class="tab">
+  <div class="card">
+    <h2>لوحة مؤشرات ضمان الجودة — <span id="qaTerm"></span></h2>
+    <div class="row">
+      <select id="qaCollege" style="width:auto;min-width:240px"></select>
+      <button class="btn" id="qaLoad">عرض المؤشرات</button>
+      <button class="btn light" id="qaExport">⬇ تصدير تقرير Excel</button>
+    </div>
+    <div class="kpi" id="qaKpi" style="margin-top:12px"></div>
+  </div>
+  <div class="card"><h2>مؤشرات الأقسام</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>الكلية</th><th>القسم</th><th>محاضرات مسجّلة</th><th>التزام بتسجيل الحضور</th><th>نسبة الحضور</th><th>طلبة بإنذار</th><th>محرومون</th><th>جداول السعي</th><th>مُصادق</th><th>نسبة النجاح</th></tr></thead><tbody id="qaDeptBody"></tbody></table></div>
+  </div>
+  <div class="card"><h2>التزام التدريسيين بتسجيل الحضور</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>التدريسي</th><th>القسم</th><th>محاضرات مجدولة حتى أمس</th><th>مسجّلة</th><th>نسبة الالتزام</th><th>متوسط الحضور</th></tr></thead><tbody id="qaInstrBody"></tbody></table></div>
+  </div>
+  <div class="card"><h2>نسب النجاح حسب المادة</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>القسم</th><th>المادة</th><th>المرحلة / الدراسة</th><th>الطلبة</th><th>ناجح</th><th>راسب</th><th>محروم</th><th>نسبة النجاح</th></tr></thead><tbody id="qaCourseBody"></tbody></table></div>
+  </div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between"><h2 style="margin:0">سجل التعديلات</h2><button class="btn light" id="auLoad">↻ تحميل سجل القسم المختار</button></div>
+    <div class="tbl-wrap" style="margin-top:8px"><table><thead><tr><th>الوقت</th><th>المستخدم</th><th>العملية</th><th>التفاصيل</th></tr></thead><tbody id="auBody"></tbody></table></div>
+  </div>
+</section>
+
 <!-- المستخدمون -->
 <section id="tUsers" class="tab">
   <div class="card">
@@ -433,7 +607,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <section id="tOrg" class="tab">
   <div class="card">
     <h2>الفصل الدراسي الحالي</h2>
-    <div class="row"><input id="orgTerm" style="max-width:320px" placeholder="2026-2027 / الفصل الأول"><button class="btn" id="saveTermBtn">حفظ</button></div>
+    <div class="row"><input id="orgTerm" style="max-width:320px" placeholder="2026-2027 / الفصل الأول"><label style="margin:0;color:#1c2733">بداية الفصل</label><input id="orgTermStart" type="date" style="width:auto"><button class="btn" id="saveTermBtn">حفظ</button></div>
     <p class="note">تُنسب كل محاضرة إلى الفصل الحالي، والتقارير تعرض الفصل الحالي فقط. غيّره عند بداية كل فصل.</p>
   </div>
   <div class="card">
@@ -484,6 +658,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
   <div class="card"><h2>حول التطبيق</h2><p class="note" id="aboutText"></p></div>
 </section>
 </main>
+</div>
 </div>
 
 <!-- نافذة تسجيل البصمة -->
@@ -577,6 +752,6 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=3.9.1"></script>
+<script src="app.js?v=4.0.0"></script>
 </body>
 </html>

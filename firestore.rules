@@ -1,5 +1,5 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 3.9
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 4.0
 // المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -8,10 +8,14 @@ service cloud.firestore {
     function me() { return get(/databases/$(database)/documents/att_users/$(request.auth.uid)).data; }
     function role() { return me().role; }
     function isSuper() { return signedIn() && role() in ['super', 'admin']; }
-    function active() { return signedIn() && role() in ['super', 'admin', 'dean', 'head', 'registrar', 'committee', 'instructor']; }
+    function active() { return signedIn() && role() in ['super', 'admin', 'dean', 'head', 'registrar', 'committee', 'qa', 'instructor']; }
+    function isQA() { return signedIn() && role() == 'qa'; }
+    function myStu() { return get(/databases/$(database)/documents/att_stu/$(request.auth.uid)).data; }
+    function isMyClass(d) { return signedIn() && myStu().deptId == d.deptId && myStu().stage == d.stage && myStu().shift == d.shift; }
+    function canDecide(c, d) { return isSuper() || isDeanOf(c) || (active() && role() == 'head' && hasDept(d)); }
     function isDeanOf(c) { return active() && role() == 'dean' && me().collegeId == c; }
     function hasDept(d) { return active() && d in me().get('deptIds', []); }
-    function canSeeDept(c, d) { return isSuper() || isDeanOf(c) || hasDept(d); }
+    function canSeeDept(c, d) { return isSuper() || isQA() || isDeanOf(c) || hasDept(d); }
     function canManageDept(c, d) { return isSuper() || isDeanOf(c) || (role() in ['head', 'registrar'] && hasDept(d)); }
     function lowDean() { return ['head', 'registrar', 'committee', 'instructor', 'disabled']; }
     function lowHead() { return ['registrar', 'committee', 'instructor', 'disabled']; }
@@ -54,7 +58,7 @@ service cloud.firestore {
 
     // المحاضرات المحفوظة
     match /att_sessions/{id} {
-      allow read: if isSuper()
+      allow read: if isSuper() || isQA() || isMyClass(resource.data)
         || (active() && resource.data.instructorUid == request.auth.uid)
         || isDeanOf(resource.data.collegeId)
         || (active() && role() in ['head', 'committee'] && hasDept(resource.data.deptId));
@@ -71,14 +75,14 @@ service cloud.firestore {
 
     // مواد القسم (الوحدات وتوزيع الدرجات) — تحددها اللجنة الامتحانية أو رئيس القسم
     match /att_courses/{deptId} {
-      allow read: if resource == null || canSeeDept(resource.data.collegeId, deptId);
+      allow read: if resource == null || canSeeDept(resource.data.collegeId, deptId) || (signedIn() && myStu().deptId == deptId);
       allow write: if isSuper() || isDeanOf(request.resource.data.collegeId)
         || (active() && role() in ['head', 'committee'] && hasDept(deptId));
     }
 
     // جداول الدرجات: السعي (التدريسي) + النهائي (اللجنة الامتحانية)
     match /att_grades/{id} {
-      allow read: if resource == null || isSuper() || isDeanOf(resource.data.collegeId)
+      allow read: if resource == null || isSuper() || isQA() || isDeanOf(resource.data.collegeId)
         || (active() && role() in ['head', 'committee'] && hasDept(resource.data.deptId))
         || (active() && resource.data.instructorUid == request.auth.uid);
       allow create: if isSuper() || isDeanOf(request.resource.data.collegeId)
@@ -88,13 +92,49 @@ service cloud.firestore {
         || (active() && role() == 'head' && hasDept(resource.data.deptId))
         // اللجنة الامتحانية: درجات النهائي فقط
         || (active() && role() == 'committee' && hasDept(resource.data.deptId)
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['finals', 'totals', 'names', 'finalsAt', 'finalsBy']))
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['finals', 'finals2', 'totals', 'names', 'finalsAt', 'finalsBy']))
         // التدريسي: السعي فقط، وقبل المصادقة
         || (active() && resource.data.instructorUid == request.auth.uid
             && resource.data.status in ['draft', 'returned'] && request.resource.data.status in ['draft', 'returned', 'submitted']
             && request.resource.data.instructorUid == resource.data.instructorUid
-            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['finals', 'finalsAt', 'finalsBy', 'approvedAt', 'approvedBy']));
+            && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['finals', 'finals2', 'finalsAt', 'finalsBy', 'approvedAt', 'approvedBy']));
       allow delete: if isSuper();
+    }
+
+    // الجدول الأسبوعي (رئيس القسم يعدّله، ويقرؤه كادر القسم وقسم الجودة)
+    match /att_schedule/{id} {
+      allow read: if resource == null || canSeeDept(resource.data.collegeId, resource.data.deptId);
+      allow create, update: if canDecide(request.resource.data.collegeId, request.resource.data.deptId);
+      allow delete: if isSuper();
+    }
+
+    // أعذار الغياب: يرفعها الطالب ويقرر فيها رئيس القسم
+    match /att_excuses/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || canSeeDept(resource.data.collegeId, resource.data.deptId));
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid && request.resource.data.status == 'pending'
+        && request.resource.data.sid == myStu().sid && request.resource.data.deptId == myStu().deptId;
+      allow update: if canDecide(resource.data.collegeId, resource.data.deptId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedBy', 'decidedAt']);
+      allow delete: if isSuper() || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status == 'pending');
+    }
+    match /att_excuse_img/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || canDecide(resource.data.collegeId, resource.data.deptId) || isQA());
+      allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isSuper();
+    }
+
+    // نتائج الطالب المنشورة (يقرأ الطالب نتيجته فقط)
+    match /att_results/{id} {
+      allow read: if signedIn() && ((myStu().sid == resource.data.sid && myStu().deptId == resource.data.deptId)
+        || canSeeDept(resource.data.collegeId, resource.data.deptId));
+      allow create, update: if canDecide(request.resource.data.collegeId, request.resource.data.deptId);
+      allow delete: if isSuper();
+    }
+
+    // سجل التعديلات: إضافة فقط، لا تعديل ولا حذف
+    match /att_audit/{id} {
+      allow read: if isSuper() || isQA() || isDeanOf(resource.data.collegeId) || (active() && role() == 'head' && hasDept(resource.data.deptId));
+      allow create: if active() && request.resource.data.uid == request.auth.uid;
     }
 
     // حسابات الطلبة: ينشئها موظف التسجيل/رئيس القسم من ملف Excel
