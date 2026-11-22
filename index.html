@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="5.2.0">
+<meta name="app-version" content="5.3.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -118,6 +118,7 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .steps-guide{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;margin-bottom:10px}
 .steps-guide div{background:#eef6f3;border:1px solid #cfe5dc;border-radius:10px;padding:8px 10px;font-size:14px;color:#1c2733}
 .steps-guide div b:first-child{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#0f766e;color:#fff;margin-left:6px}
+.sel-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#f7f9fc;border:1px solid var(--line,#e6eaf0);border-radius:12px;padding:8px 10px;margin-bottom:10px}
 img.sf{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid #cfe5dc}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
 </style>
@@ -521,6 +522,12 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
       <button class="btn light sm" id="templateBtn">⬇ تنزيل قالب Excel</button>
       <button class="btn light sm" id="exportStudentsBtn">📤 تصدير قائمة الطلبة (Excel)</button>
       <button class="btn light sm" id="syncPrintsBtn" title="ينسخ بصمة وجه كل طالب إلى حسابه ليتحقق الهاتف من وجهه عند مسح QR">↻ مزامنة بصمات الوجه مع حسابات الطلبة</button>
+    </div>
+    <div class="sel-bar hidden" id="selBar">
+      <span id="selCount" class="note"></span>
+      <button class="btn sm light" id="selAll">☑ تحديد الكل الظاهر</button><button class="btn sm light" id="selNone">إلغاء التحديد</button>
+      <button class="btn sm green" id="selReissue">🔁 إعادة إنشاء الحسابات بكلمات مرور جديدة</button><button class="btn sm red" id="selPurge">🗑 حذف نهائي</button>
+      <span class="badge b-gray">صلاحية رئيس القسم</span>
     </div>
     <div class="tbl-wrap"><table><thead><tr><th>الرقم</th><th>الاسم</th><th>المرحلة</th><th>الدراسة</th><th>الشعبة</th><th>البصمة</th><th>حساب الطالب</th><th>إجراءات</th></tr></thead><tbody id="studentsBody"></tbody></table></div>
   </div>
@@ -941,6 +948,17 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
   </div>
 </div>
 
+<!-- نافذة إدارة حسابات الطلبة (رئيس القسم) -->
+<div class="modal-bg" id="acctModal"><div class="modal" style="width:min(780px,100%)">
+  <h3 id="acTitle"></h3>
+  <p class="note" id="acDesc" style="line-height:1.8"></p>
+  <label id="acFaceRow" style="display:flex;gap:6px;align-items:center;color:#1c2733;margin:6px 0"><input type="checkbox" id="acFace" style="width:auto"> حذف بصمة الوجه أيضاً (يسجّلها الطالب من جديد عند دخوله)</label>
+  <div id="acConfirmRow" class="banner" style="margin:8px 0">⚠ لا يمكن التراجع عن الحذف النهائي. للتأكيد اكتب كلمة <b>حذف</b>: <input id="acConfirm" style="width:120px;display:inline-block;margin-right:6px"></div>
+  <div class="tbl-wrap" style="max-height:340px"><table><thead id="acHead"></thead><tbody id="acBody"></tbody></table></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><span id="acProg" class="note"></span>
+    <button class="btn light" id="acClose">إغلاق</button><button class="btn hidden" id="acExport">⬇ تنزيل Excel بالحسابات الجديدة</button><button class="btn" id="acRun"></button></div>
+</div></div>
+
 <!-- نافذة التحقق العشوائي -->
 <div class="modal-bg" id="spotModal"><div class="modal" style="width:min(640px,100%);text-align:center">
   <h3>🎲 تحقق عشوائي — نادِ على هؤلاء الطلبة ليرفعوا أيديهم</h3>
@@ -958,6 +976,6 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=5.2.0"></script>
+<script src="app.js?v=5.3.0"></script>
 </body>
 </html>

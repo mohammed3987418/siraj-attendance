@@ -17,6 +17,7 @@ service cloud.firestore {
     function hasDept(d) { return active() && d in me().get('deptIds', []); }
     function canSeeDept(c, d) { return isSuper() || isQA() || isDeanOf(c) || hasDept(d); }
     function canManageDept(c, d) { return isSuper() || isDeanOf(c) || (role() in ['head', 'registrar'] && hasDept(d)); }
+    function isHeadOf(d) { return active() && role() == 'head' && hasDept(d); }
     function lowDean() { return ['head', 'registrar', 'committee', 'instructor', 'disabled']; }
     function lowHead() { return ['registrar', 'committee', 'instructor', 'disabled']; }
 
@@ -166,7 +167,13 @@ service cloud.firestore {
           && resource.data.get('p', []).size() == 0
           && request.resource.data.p.size() <= 6
           && request.resource.data.pAt == request.time);
-      allow delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
+      allow delete: if isHeadOf(resource.data.deptId);   // الحذف النهائي لرئيس القسم حصراً
+    }
+
+    // كلمات المرور الأولية لحسابات الطلبة: يقرؤها رئيس القسم فقط (لإعادة الإنشاء والحذف النهائي)
+    match /att_cred/{uid} {
+      allow read, update, delete: if isHeadOf(resource.data.deptId);
+      allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
     }
 
     // كل هاتف مربوط بحساب طالب واحد فقط

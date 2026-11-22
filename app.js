@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '5.2.0';
+const APP_VERSION = '5.3.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -543,9 +543,10 @@ function filteredStudents(){
     (!q || s.name.includes(q) || s.id.includes(q)));
 }
 function accountCell(s, key){
-  if (s.u) return `<span class="badge b-face">مفعّل</span> <span class="note" dir="ltr">${esc(s.e)}</span> <button class="btn sm light" data-reset="${key}" title="يُرسل رابط تغيير كلمة المرور إلى بريد الطالب">🔑 رابط كلمة مرور</button> <button class="btn sm light" data-unbind="${key}" title="عند تغيير الطالب هاتفه">📱 فك ربط الهاتف</button>`;
-  if (s.e) return `<span class="badge b-man">لم يُنشأ</span> <span class="note" dir="ltr">${esc(s.e)}</span>`;
-  return '<span class="note">—</span>';
+  const h = isHeadHere();
+  if (s.u) return `<span class="badge b-face">مفعّل</span> <span class="note" dir="ltr">${esc(s.e)}</span> ${h ? `<button class="btn sm light" data-reissue="${key}" title="حساب جديد بكلمة مرور جديدة (رئيس القسم)">🔑 كلمة مرور جديدة</button>` : ''} <button class="btn sm light" data-unbind="${key}" title="عند تغيير الطالب هاتفه">📱 فك ربط الهاتف</button>`;
+  if (s.e) return `<span class="badge b-man">لم يُنشأ</span> <span class="note" dir="ltr">${esc(s.e)}</span>${h ? ` <button class="btn sm light" data-reissue="${key}">➕ إنشاء حساب</button>` : ''}`;
+  return h ? `<button class="btn sm light" data-reissue="${key}">➕ إنشاء حساب</button>` : '<span class="note">—</span>';
 }
 function renderStudents(){
   if (!canManageStudents()) return;
@@ -554,14 +555,15 @@ function renderStudents(){
     ` — ${all.filter(s => s.u).length} لديهم حساب` + (nd ? ` — ⚠ ${nd} ببصمة متشابهة` : '');
   $('#studentsBody').innerHTML = list.slice(0, 800).map(s => {
     const n = s.prints.length, key = esc(s.packId + '|' + s.id);
-    return `<tr><td>${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.stage)}</td><td>${esc(s.shift)}</td><td>${esc(s.section)}</td>
+    return `<tr><td>${isHeadHere() ? `<input type="checkbox" data-sel="${key}" ${selKeys.has(s.packId + '|' + s.id) ? 'checked' : ''} style="width:auto;margin-left:6px">` : ''}${esc(s.id)}</td><td>${esc(s.name)}</td><td>${esc(s.stage)}</td><td>${esc(s.shift)}</td><td>${esc(s.section)}</td>
     <td>${s.th ? `<img class="sf" src="${esc(s.th)}" data-zoom="1" alt=""> ` : ''}${n ? `<span class="badge b-face">مسجّلة (${n})</span>` : '<span class="badge b-abs">غير مسجّلة</span>'}${n && s.self ? ' <span class="badge b-qr" title="سجّلها الطالب من هاتفه">ذاتية</span>' : ''}
       ${dups[s.id] ? `<div><span class="badge b-dep" title="قد يكون وجه الشخص نفسه">⚠ تشبه: ${dups[s.id].map(x => esc(x.name)).join('، ')}</span></div>` : ''}</td>
     <td>${accountCell(s, key)}</td>
     <td class="row"><button class="btn sm" data-enroll="${key}">${n ? 'إعادة البصمة' : 'تسجيل البصمة'}</button>
     ${n ? `<button class="btn sm light" data-clear="${key}">حذف البصمة</button>` : ''}
-    <button class="btn sm red" data-del="${key}">حذف</button></td></tr>`;
+    ${isHeadHere() ? `<button class="btn sm red" data-purge="${key}">🗑 حذف نهائي</button>` : ''}</td></tr>`;
   }).join('') || `<tr><td colspan="8" class="note">${App.dept ? 'لا يوجد طلبة' : 'اختر القسم'}</td></tr>`;
+  renderSelBar();
 }
 /* ---- استيراد الطلبة من Excel وإنشاء حساباتهم ---- */
 const HDR = {id:['الرقم الجامعي','الرقم','id','student id','رقم'], name:['الاسم','اسم الطالب','الاسم الرباعي','name'],
@@ -700,11 +702,13 @@ $('#impRun').onclick = async () => {
     $('#impProgress').textContent = `جارٍ الإنشاء ${++n} / ${rows.length}`;
     r.pass = genPass(); r.status = 'جارٍ...'; renderImport();
     try{
-      const uid = await createStudentAccount(r), pid = packId(d.id, r.stage, r.shift);
+      const cr = await createWithFallback(r.email, r.pass), uid = cr.uid, pid = packId(d.id, r.stage, r.shift);
+      if (cr.email !== r.email){ r.email = cr.email; r.altEmail = true; }
       await DB.set('att_stu', uid, {sid:r.id, name:r.name, email:r.email, deptId:d.id, collegeId:d.collegeId, stage:r.stage, shift:r.shift, section:r.section, createdAt:nowISO(), createdBy:App.user.uid}).p;
       bg(DB.set('att_packs', pid, {collegeId:d.collegeId, deptId:d.id, stage:r.stage, shift:r.shift, updatedAt:nowISO(),
         students:{[r.id]:{n:r.name, s:r.section, e:r.email, u:uid}}}, true).p);
-      r.created = true; r.status = 'تم إنشاء الحساب ✓';
+      saveCred(uid, d, r.id, r.email, r.pass);
+      r.created = true; r.status = r.altEmail ? 'تم ✓ (بريد بديل لأن القديم مستخدم)' : 'تم إنشاء الحساب ✓';
     }catch(e){
       console.error(e); r.pass = '';
       if (e.code === 'auth/too-many-requests' || e.code === 'auth/quota-exceeded'){ r.status = 'توقف: تجاوز حد Firebase'; stopped = true; }
@@ -756,11 +760,145 @@ $('#studentsBody').onclick = async e => {
     bg(DB.update('att_packs', s.packId, {[`students.${s.id}.self`]:DEL, [`students.${s.id}.th`]:DEL}).p);
     audit('حذف بصمة طالب', `${s.name} (${s.id})`);
   }
-  if (b.dataset.del && await confirmBox('حذف الطالب', 'سيتم حذف الطالب وبصمته. سجلات الحضور السابقة تبقى كما هي.', 'حذف')){
-    const s = findStudent(b.dataset.del);
-    bg(DB.update('att_packs', s.packId, {[`students.${s.id}`]:DEL, updatedAt:nowISO()}).p); audit('حذف طالب', `${s.name} (${s.id})`);
-  }
+  if (b.dataset.purge){ const s = findStudent(b.dataset.purge); if (s) openAcct('purge', [s]); }
+  if (b.dataset.reissue){ const s = findStudent(b.dataset.reissue); if (s) openAcct('reissue', [s]); }
 };
+
+/* ---- إدارة حسابات الطلبة: حذف نهائي وإعادة إنشاء الحساب بكلمة مرور جديدة (رئيس القسم حصراً) ---- */
+const isHeadHere = () => is('head') && !!App.dept && (App.user.deptIds || []).includes(App.dept.id);
+let selKeys = new Set(), ac = null;
+const secApp = () => firebase.apps.find(a => a.name === 'secondary') || firebase.initializeApp(window.FIREBASE_CONFIG, 'secondary');
+const autoEmailOf = sid => `${String(sid).toLowerCase().replace(/[^a-z0-9._-]/g, '')}@${stuDomain()}`;
+const altEmail = (email, n) => { const [l, d] = email.split('@'); return `${l.replace(/\+r\d+$/, '')}+r${n}@${d}`; };
+// إنشاء حساب؛ إن كان البريد مستخدماً (حساب قديم لم يُحذف) يُستخدم بريد بديل: name+r2@...
+async function createWithFallback(email, pass){
+  if (App.mode === 'local') return {uid:'L' + Date.now() + Math.random().toString(36).slice(2, 6), email};
+  const sec = secApp(); let e = email;
+  for (let n = 2; n <= 15; n++){
+    try{ const cr = await sec.auth().createUserWithEmailAndPassword(e, pass); const uid = cr.user.uid; await sec.auth().signOut(); return {uid, email:e}; }
+    catch(err){ if (err.code !== 'auth/email-already-in-use') throw err; e = altEmail(email, n); }
+  }
+  throw new Error('تعذّر إيجاد بريد متاح');
+}
+// حفظ كلمة المرور الأولية (يقرؤها رئيس القسم فقط) — تتيح لاحقاً حذف الحساب من Firebase نهائياً
+const saveCred = (uid, d, sid, email, pw) => bg(DB.set('att_cred', uid, {sid, email, pw, deptId:d.id, collegeId:d.collegeId, at:nowISO(), by:App.user.uid}).p);
+// حذف حساب الدخول نفسه من Firebase Authentication (ممكن إذا حُفظت كلمة مروره عند إنشائه)
+async function tryDeleteAuth(uid, email){
+  if (App.mode === 'local') return true;
+  let c = null; try{ c = await DB.get('att_cred', uid); }catch(e){}
+  if (!c || !c.pw) return false;
+  const sec = secApp();
+  try{ const cr = await sec.auth().signInWithEmailAndPassword(c.email || email, c.pw); await cr.user.delete(); return true; }
+  catch(e){ console.warn('auth delete', e.code); try{ await sec.auth().signOut(); }catch(_){} return false; }
+}
+async function purgeStudent(s, d){
+  let authDel = !s.u;
+  if (s.u){
+    authDel = await tryDeleteAuth(s.u, s.e);
+    const st = await DB.get('att_stu', s.u).catch(() => null);
+    if (st && st.boundDevice) await DB.del('att_devices', st.boundDevice).p.catch(() => {});
+    if (st) await DB.del('att_stu', s.u).p;
+    bg(DB.del('att_cred', s.u).p);
+  }
+  await DB.update('att_packs', s.packId, {[`students.${s.id}`]:DEL, updatedAt:nowISO()}).p;
+  return {authDel};
+}
+async function reissueStudent(s, d, resetFace){
+  const old = s.u ? await DB.get('att_stu', s.u).catch(() => null) : null;
+  const authDel = s.u ? await tryDeleteAuth(s.u, s.e) : true;
+  const base = (s.e || (old && old.email) || autoEmailOf(s.id)).replace(/\+r\d+@/, '@');
+  const pass = genPass(), {uid, email} = await createWithFallback(base, pass);
+  const data = {sid:s.id, name:s.name, email, deptId:d.id, collegeId:d.collegeId, stage:s.stage, shift:s.shift, section:s.section || '', createdAt:nowISO(), createdBy:App.user.uid, reissuedAt:nowISO()};
+  if (!resetFace && old && (old.p || []).length) Object.assign(data, {p:old.p}, old.pSelf ? {pSelf:true} : {}, old.pThumb ? {pThumb:old.pThumb} : {});
+  await DB.set('att_stu', uid, data).p;
+  if (s.u){
+    if (old && old.boundDevice) bg(DB.del('att_devices', old.boundDevice).p);
+    if (old) bg(DB.del('att_stu', s.u).p);
+    bg(DB.del('att_cred', s.u).p);
+  }
+  const patch = {[`students.${s.id}.u`]:uid, [`students.${s.id}.e`]:email, updatedAt:nowISO()};
+  if (resetFace) Object.assign(patch, {[`students.${s.id}.p`]:DEL, [`students.${s.id}.c`]:DEL, [`students.${s.id}.self`]:DEL, [`students.${s.id}.th`]:DEL});
+  await DB.update('att_packs', s.packId, patch).p;
+  saveCred(uid, d, s.id, email, pass);
+  return {email, pass, authDel, changed:email !== base};
+}
+function openAcct(mode, list){
+  if (!isHeadHere()) return toast('هذه العملية لرئيس القسم فقط', 'err');
+  if (!list.length) return toast('حدّد طالباً واحداً على الأقل', 'err');
+  if (App.mode !== 'local' && !navigator.onLine) return toast('هذه العملية تحتاج اتصالاً بالإنترنت', 'err');
+  ac = {mode, rows:list.map(s => ({s, status:'', email:'', pass:''})), running:false, done:false};
+  const purge = mode === 'purge';
+  $('#acTitle').textContent = purge ? `🗑 حذف نهائي — ${list.length} طالب` : `🔁 إعادة إنشاء الحسابات بكلمات مرور جديدة — ${list.length} طالب`;
+  $('#acDesc').innerHTML = purge
+    ? 'سيُحذف الطالب من قائمة القسم، ويُحذف حسابه وبصمة وجهه وربط هاتفه نهائياً، ولن يستطيع الدخول. <b>سجلات الحضور والدرجات السابقة تبقى</b> مرتبطة برقمه الجامعي. يمكنك تسجيله مرة ثانية لاحقاً باستيراده من Excel.'
+    : 'يُلغى حساب الطالب القديم وكلمة مروره، ويُنشأ له حساب جديد بكلمة مرور جديدة، ويُفك ربط هاتفه. بعد التنفيذ نزّل ملف Excel بالحسابات الجديدة ووزّعه.';
+  $('#acFaceRow').classList.toggle('hidden', purge); $('#acFace').checked = false;
+  $('#acConfirmRow').classList.toggle('hidden', !purge); $('#acConfirm').value = '';
+  $('#acRun').textContent = purge ? '🗑 حذف نهائي' : '🔁 إنشاء الحسابات الجديدة'; $('#acRun').className = 'btn ' + (purge ? 'red' : 'green');
+  $('#acProg').textContent = ''; renderAcct(); $('#acctModal').classList.add('show');
+}
+function renderAcct(){
+  const purge = ac.mode === 'purge';
+  $('#acHead').innerHTML = `<tr><th>الرقم</th><th>الاسم</th>${purge ? '' : '<th>اسم الدخول الجديد</th><th>كلمة المرور</th>'}<th>الحالة</th></tr>`;
+  $('#acBody').innerHTML = ac.rows.map(r => `<tr><td>${esc(r.s.id)}</td><td>${esc(r.s.name)}</td>${purge ? '' : `<td dir="ltr" style="text-align:right">${esc(r.email)}</td><td dir="ltr" style="font-family:monospace">${esc(r.pass)}</td>`}
+    <td><span class="badge ${r.ok ? 'b-face' : r.err ? 'b-abs' : 'b-gray'}">${esc(r.status || 'بانتظار التنفيذ')}</span></td></tr>`).join('');
+  $('#acRun').classList.toggle('hidden', ac.done); $('#acRun').disabled = ac.running;
+  $('#acExport').classList.toggle('hidden', purge || !ac.rows.some(r => r.ok));
+}
+$('#acRun').onclick = async () => {
+  const purge = ac.mode === 'purge', d = App.dept;
+  if (purge && $('#acConfirm').value.trim() !== 'حذف') return toast('اكتب كلمة «حذف» للتأكيد', 'err');
+  ac.running = true; renderAcct(); let n = 0, stopped = false, oldKept = 0;
+  for (const r of ac.rows){
+    $('#acProg').textContent = `جارٍ التنفيذ ${++n} / ${ac.rows.length}`; r.status = 'جارٍ...'; renderAcct();
+    try{
+      if (purge){ const x = await purgeStudent(r.s, d); r.ok = true; r.status = 'حُذف نهائياً ✓'; if (!x.authDel) oldKept++; }
+      else { const x = await reissueStudent(r.s, d, $('#acFace').checked); Object.assign(r, {ok:true, email:x.email, pass:x.pass, status:x.changed ? 'حساب جديد ✓ (اسم دخول جديد)' : 'حساب جديد ✓'}); if (!x.authDel) oldKept++; }
+      selKeys.delete(r.s.packId + '|' + r.s.id);
+    }catch(e){
+      console.error(e); r.err = true;
+      if (e.code === 'auth/too-many-requests' || e.code === 'auth/quota-exceeded'){ r.status = 'توقف: تجاوز حد Firebase'; stopped = true; }
+      else r.status = fbErr(e) || e.message;
+    }
+    renderAcct(); if (stopped) break;
+    await new Promise(res => setTimeout(res, 250));
+  }
+  ac.running = false; ac.done = true;
+  const ok = ac.rows.filter(r => r.ok).length;
+  $('#acProg').textContent = `انتهى — ${ok} من ${ac.rows.length}`;
+  audit(purge ? 'حذف طلبة نهائياً' : 'إعادة إنشاء حسابات طلبة', ac.rows.filter(r => r.ok).map(r => `${r.s.name} (${r.s.id})`).join('، ').slice(0, 900));
+  renderAcct();
+  if (!purge && ok) toast('نزّل ملف Excel الآن — كلمات المرور الجديدة لن تظهر مرة أخرى', 'ok');
+  if (oldKept && App.mode !== 'local') toast(`${oldKept} حساب قديم أُنشئ قبل هذا الإصدار بقي معطّلاً في Firebase (لا يستطيع الدخول للنظام). يمكن حذفه يدوياً من Firebase ← Authentication إن أردت.`, 'ok');
+  if (stopped) toast('أوقف Firebase الإنشاء مؤقتاً (حد ١٠٠ حساب في الساعة). نزّل الملف وأكمل البقية بعد ساعة.', 'err');
+};
+$('#acExport').onclick = () => {
+  if (!needXLSX()) return;
+  const d = App.dept, link = location.origin + location.pathname.replace(/index\.html$/, '');
+  const rows = ac.rows.filter(r => r.ok).map(r => [r.s.id, r.s.name, r.email, r.pass, r.s.stage, r.s.shift, r.s.section]);
+  const ws = XLSX.utils.aoa_to_sheet([['رابط النظام', link], ['التعليمات', 'حساب جديد: يدخل الطالب بالبريد وكلمة المرور الجديدين. الحساب القديم لم يعد يعمل.'], [],
+    ['الرقم الجامعي','الاسم','البريد الإلكتروني (اسم الدخول)','كلمة المرور','المرحلة','الدراسة','الشعبة'], ...rows]);
+  ws['!cols'] = [{wch:14},{wch:30},{wch:34},{wch:14},{wch:10},{wch:10},{wch:8}];
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'الحسابات الجديدة');
+  XLSX.writeFile(wb, `حسابات_جديدة_${d.id}_${today()}.xlsx`); ac.exported = true;
+};
+$('#acClose').onclick = async () => {
+  if (ac && ac.running) return;
+  if (ac && ac.mode === 'reissue' && ac.rows.some(r => r.ok) && !ac.exported && !(await confirmBox('لم تنزّل ملف الحسابات', 'كلمات المرور الجديدة لن تظهر مرة أخرى. إغلاق دون تنزيل؟', 'إغلاق'))) return;
+  $('#acctModal').classList.remove('show'); ac = null; renderStudents();
+};
+// شريط التحديد الجماعي
+function renderSelBar(){
+  const h = isHeadHere(); $('#selBar').classList.toggle('hidden', !h); if (!h) return;
+  $('#selCount').textContent = selKeys.size ? `محدّد: ${selKeys.size} طالب` : 'حدّد طلبة من الجدول (مربع الاختيار بجانب الرقم)';
+  $('#selReissue').disabled = $('#selPurge').disabled = $('#selNone').disabled = !selKeys.size;
+}
+const selList = () => [...selKeys].map(findStudent).filter(Boolean);
+$('#selAll').onclick = () => { filteredStudents().slice(0, 800).forEach(s => selKeys.add(s.packId + '|' + s.id)); renderStudents(); };
+$('#selNone').onclick = () => { selKeys.clear(); renderStudents(); };
+$('#selReissue').onclick = () => openAcct('reissue', selList());
+$('#selPurge').onclick = () => openAcct('purge', selList());
+$('#studentsBody').addEventListener('change', e => { const c = e.target.closest('input[data-sel]'); if (!c) return; c.checked ? selKeys.add(c.dataset.sel) : selKeys.delete(c.dataset.sel); renderSelBar(); });
 
 /* ============ تسجيل البصمة ============ */
 let enroll = null, enrollLoop = false;
