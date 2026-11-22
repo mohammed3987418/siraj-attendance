@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '5.3.0';
+const APP_VERSION = '5.3.1';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -803,6 +803,25 @@ async function purgeStudent(s, d){
   await DB.update('att_packs', s.packId, {[`students.${s.id}`]:DEL, updatedAt:nowISO()}).p;
   return {authDel};
 }
+// حذف كل سجلات الطلبة المحذوفين: الحضور، الدرجات، الأعذار وصورها، النتائج، الإشعارات
+async function wipeRecords(sids, uids, d){
+  const out = {sessions:0, grades:0, excuses:0, results:0, notifs:0}, f = [['deptId', d.id]];
+  const q = c => DB.query(c, f).catch(e => { console.warn(c, e); return []; });
+  const [sess, grades, exc, res, nts] = await Promise.all([q('att_sessions'), q('att_grades'), q('att_excuses'), q('att_results'), q('att_notif')]);
+  for (const x of sess){
+    const pr = (x.present || []).filter(p => !sids.has(p.id)), ab = (x.absentees || []).filter(id => !sids.has(id));
+    if (pr.length !== (x.present || []).length || ab.length !== (x.absentees || []).length){ await DB.update('att_sessions', x.id, {present:pr, absentees:ab, updatedAt:nowISO()}).p; out.sessions++; }
+  }
+  for (const g of grades){
+    const patch = {};
+    ['marks','overrides','finals','finals2','totals','names'].forEach(k => Object.keys(g[k] || {}).forEach(id => { if (sids.has(id)) patch[`${k}.${id}`] = DEL; }));
+    if (Object.keys(patch).length){ await DB.update('att_grades', g.id, patch).p; out.grades++; }
+  }
+  for (const x of exc.filter(x => sids.has(x.sid))){ await DB.del('att_excuses', x.id).p; bg(DB.del('att_excuse_img', x.id).p); out.excuses++; }
+  for (const x of res.filter(x => sids.has(x.sid))){ await DB.del('att_results', x.id).p; out.results++; }
+  for (const x of nts.filter(x => sids.has(x.sid) || uids.has(x.uid))){ bg(DB.del('att_notif', x.id).p); out.notifs++; }
+  return out;
+}
 async function reissueStudent(s, d, resetFace){
   const old = s.u ? await DB.get('att_stu', s.u).catch(() => null) : null;
   const authDel = s.u ? await tryDeleteAuth(s.u, s.e) : true;
@@ -830,10 +849,11 @@ function openAcct(mode, list){
   const purge = mode === 'purge';
   $('#acTitle').textContent = purge ? `🗑 حذف نهائي — ${list.length} طالب` : `🔁 إعادة إنشاء الحسابات بكلمات مرور جديدة — ${list.length} طالب`;
   $('#acDesc').innerHTML = purge
-    ? 'سيُحذف الطالب من قائمة القسم، ويُحذف حسابه وبصمة وجهه وربط هاتفه نهائياً، ولن يستطيع الدخول. <b>سجلات الحضور والدرجات السابقة تبقى</b> مرتبطة برقمه الجامعي. يمكنك تسجيله مرة ثانية لاحقاً باستيراده من Excel.'
+    ? 'سيُحذف كل ما يخص الطالب نهائياً: حسابه وبريده (اسم الدخول) وكلمة مروره، واسمه من قائمة القسم، وبصمة وجهه، وربط هاتفه، وإشعاراته. يمكنك تسجيله مرة ثانية لاحقاً باستيراده من Excel بالبريد نفسه.'
     : 'يُلغى حساب الطالب القديم وكلمة مروره، ويُنشأ له حساب جديد بكلمة مرور جديدة، ويُفك ربط هاتفه. بعد التنفيذ نزّل ملف Excel بالحسابات الجديدة ووزّعه.';
   $('#acFaceRow').classList.toggle('hidden', purge); $('#acFace').checked = false;
   $('#acConfirmRow').classList.toggle('hidden', !purge); $('#acConfirm').value = '';
+  $('#acAllRow').classList.toggle('hidden', !purge); $('#acAll').checked = true; $('#acManual').classList.add('hidden');
   $('#acRun').textContent = purge ? '🗑 حذف نهائي' : '🔁 إنشاء الحسابات الجديدة'; $('#acRun').className = 'btn ' + (purge ? 'red' : 'green');
   $('#acProg').textContent = ''; renderAcct(); $('#acctModal').classList.add('show');
 }
@@ -844,15 +864,26 @@ function renderAcct(){
     <td><span class="badge ${r.ok ? 'b-face' : r.err ? 'b-abs' : 'b-gray'}">${esc(r.status || 'بانتظار التنفيذ')}</span></td></tr>`).join('');
   $('#acRun').classList.toggle('hidden', ac.done); $('#acRun').disabled = ac.running;
   $('#acExport').classList.toggle('hidden', purge || !ac.rows.some(r => r.ok));
+  const man = (ac.manual || []);
+  $('#acManual').classList.toggle('hidden', !man.length || App.mode === 'local');
+  if (man.length){
+    const pid = (window.FIREBASE_CONFIG || {}).projectId || '';
+    $('#acManual').innerHTML = `<b>⚠ ${man.length} بريد أُنشئ قبل الإصدار 5.3 ولا يستطيع النظام حذفه من Firebase بنفسه.</b> هذه الحسابات معطّلة ولا تدخل النظام، لكن لحذف البريد نهائياً:
+      افتح <a href="https://console.firebase.google.com/project/${esc(pid)}/authentication/users" target="_blank" rel="noopener">Firebase ← Authentication ← Users</a>، وابحث عن كل بريد، ثم ⋮ ← <b>Delete account</b>.
+      <div dir="ltr" style="text-align:left;margin-top:6px;font-family:monospace;user-select:all;white-space:pre-wrap">${esc(man.join('\n'))}</div>
+      <button class="btn sm light" id="acCopy" style="margin-top:6px">📋 نسخ القائمة</button>`;
+    $('#acCopy').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(man.join('\n')).then(() => toast('نُسخت ✓', 'ok')); };
+  }
 }
 $('#acRun').onclick = async () => {
   const purge = ac.mode === 'purge', d = App.dept;
   if (purge && $('#acConfirm').value.trim() !== 'حذف') return toast('اكتب كلمة «حذف» للتأكيد', 'err');
-  ac.running = true; renderAcct(); let n = 0, stopped = false, oldKept = 0;
+  ac.running = true; renderAcct(); let n = 0, stopped = false, oldKept = 0; const gone = new Set(), goneU = new Set(), manual = [];
   for (const r of ac.rows){
     $('#acProg').textContent = `جارٍ التنفيذ ${++n} / ${ac.rows.length}`; r.status = 'جارٍ...'; renderAcct();
     try{
-      if (purge){ const x = await purgeStudent(r.s, d); r.ok = true; r.status = 'حُذف نهائياً ✓'; if (!x.authDel) oldKept++; }
+      if (purge){ const x = await purgeStudent(r.s, d); r.ok = true; gone.add(r.s.id); if (r.s.u) goneU.add(r.s.u);
+        r.status = x.authDel ? 'حُذف نهائياً مع البريد ✓' : 'حُذف ✓ — البريد يُحذف يدوياً من Firebase'; if (!x.authDel){ oldKept++; manual.push(r.s.e); } }
       else { const x = await reissueStudent(r.s, d, $('#acFace').checked); Object.assign(r, {ok:true, email:x.email, pass:x.pass, status:x.changed ? 'حساب جديد ✓ (اسم دخول جديد)' : 'حساب جديد ✓'}); if (!x.authDel) oldKept++; }
       selKeys.delete(r.s.packId + '|' + r.s.id);
     }catch(e){
@@ -863,13 +894,18 @@ $('#acRun').onclick = async () => {
     renderAcct(); if (stopped) break;
     await new Promise(res => setTimeout(res, 250));
   }
+  if (purge && gone.size && $('#acAll').checked){
+    $('#acProg').textContent = '⏳ جارٍ حذف سجلات الحضور والدرجات والأعذار...';
+    try{ const w = await wipeRecords(gone, goneU, d); ac.wiped = w; }catch(e){ console.error(e); toast('تعذّر حذف بعض السجلات: ' + fbErr(e), 'err'); }
+  }
+  ac.manual = manual.filter(Boolean);
   ac.running = false; ac.done = true;
   const ok = ac.rows.filter(r => r.ok).length;
-  $('#acProg').textContent = `انتهى — ${ok} من ${ac.rows.length}`;
+  $('#acProg').textContent = `انتهى — ${ok} من ${ac.rows.length}` + (ac.wiped ? ` — حُذف الطالب من ${ac.wiped.sessions} محاضرة و${ac.wiped.grades} جدول درجات و${ac.wiped.excuses} عذر و${ac.wiped.results} نتيجة` : '');
   audit(purge ? 'حذف طلبة نهائياً' : 'إعادة إنشاء حسابات طلبة', ac.rows.filter(r => r.ok).map(r => `${r.s.name} (${r.s.id})`).join('، ').slice(0, 900));
   renderAcct();
   if (!purge && ok) toast('نزّل ملف Excel الآن — كلمات المرور الجديدة لن تظهر مرة أخرى', 'ok');
-  if (oldKept && App.mode !== 'local') toast(`${oldKept} حساب قديم أُنشئ قبل هذا الإصدار بقي معطّلاً في Firebase (لا يستطيع الدخول للنظام). يمكن حذفه يدوياً من Firebase ← Authentication إن أردت.`, 'ok');
+  if (oldKept && App.mode !== 'local' && !purge) toast(`${oldKept} حساب قديم أُنشئ قبل الإصدار 5.3 بقي معطّلاً في Firebase. احذفه يدوياً من Firebase ← Authentication إن أردت.`, 'ok');
   if (stopped) toast('أوقف Firebase الإنشاء مؤقتاً (حد ١٠٠ حساب في الساعة). نزّل الملف وأكمل البقية بعد ساعة.', 'err');
 };
 $('#acExport').onclick = () => {

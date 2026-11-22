@@ -125,12 +125,12 @@ service cloud.firestore {
         && request.resource.data.sid == myStu().sid && request.resource.data.deptId == myStu().deptId;
       allow update: if canDecide(resource.data.collegeId, resource.data.deptId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedBy', 'decidedAt']);
-      allow delete: if isSuper() || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status == 'pending');
+      allow delete: if isSuper() || isHeadOf(resource.data.deptId) || (signedIn() && resource.data.uid == request.auth.uid && resource.data.status == 'pending');
     }
     match /att_excuse_img/{id} {
       allow read: if signedIn() && (resource.data.uid == request.auth.uid || canDecide(resource.data.collegeId, resource.data.deptId) || isQA());
       allow create: if signedIn() && request.resource.data.uid == request.auth.uid;
-      allow delete: if isSuper();
+      allow delete: if isSuper() || isHeadOf(resource.data.deptId);
     }
 
     // نتائج الطالب المنشورة (يقرأ الطالب نتيجته فقط)
@@ -138,7 +138,7 @@ service cloud.firestore {
       allow read: if signedIn() && ((myStu().sid == resource.data.sid && myStu().deptId == resource.data.deptId)
         || canSeeDept(resource.data.collegeId, resource.data.deptId));
       allow create, update: if canDecide(request.resource.data.collegeId, request.resource.data.deptId);
-      allow delete: if isSuper();
+      allow delete: if isSuper() || isHeadOf(resource.data.deptId);
     }
 
     // سجل التعديلات: إضافة فقط، لا تعديل ولا حذف
@@ -224,7 +224,7 @@ service cloud.firestore {
       allow read: if signedIn() && (resource.data.uid == request.auth.uid || canSeeDept(resource.data.collegeId, resource.data.deptId));
       allow create: if active() && role() != 'qa' && canSeeDept(request.resource.data.collegeId, request.resource.data.deptId);
       allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
-      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if signedIn() && (resource.data.uid == request.auth.uid || isHeadOf(resource.data.deptId));
     }
 
   }
