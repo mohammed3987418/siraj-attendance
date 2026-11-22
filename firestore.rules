@@ -1,5 +1,5 @@
 rules_version = '2';
-// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 4.0
+// قواعد حماية نظام الحضور (متعدد الكليات والأقسام + QR) — جامعة السراج — الإصدار 5.0
 // المجموعات تبدأ بـ att_ حتى لا تتعارض مع أنظمة أخرى في نفس المشروع
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -200,5 +200,25 @@ service cloud.firestore {
           && request.resource.data.at == request.time;
       }
     }
+
+    // ===== الإصدار 5 =====
+    function isStu() { return signedIn() && exists(/databases/$(database)/documents/att_stu/$(request.auth.uid)); }
+    function stuDept(d) { return isStu() && myStu().deptId == d; }
+
+    // الإعلانات: يكتبها رئيس القسم/العميد/التسجيل، ويقرؤها طلبة القسم
+    match /att_ann/{id} {
+      allow read: if canSeeDept(resource.data.collegeId, resource.data.deptId) || stuDept(resource.data.deptId);
+      allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId) && request.resource.data.by == request.auth.uid;
+      allow update, delete: if canManageDept(resource.data.collegeId, resource.data.deptId);
+    }
+
+    // إشعارات الطالب داخل التطبيق
+    match /att_notif/{id} {
+      allow read: if signedIn() && (resource.data.uid == request.auth.uid || canSeeDept(resource.data.collegeId, resource.data.deptId));
+      allow create: if active() && role() != 'qa' && canSeeDept(request.resource.data.collegeId, request.resource.data.deptId);
+      allow update: if signedIn() && resource.data.uid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow delete: if signedIn() && resource.data.uid == request.auth.uid;
+    }
+
   }
 }

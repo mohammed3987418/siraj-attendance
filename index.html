@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="4.1.0">
+<meta name="app-version" content="5.2.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -163,6 +163,124 @@ html,body{overflow-x:hidden}
   .topbar .scope{width:100%}.topbar .scope select{min-width:0;flex:1}
 }
 </style>
+<style id="v5css">
+/* ===== الإصدار 5: تصميم بسيط وواضح ===== */
+:root{--navy:#15406b;--navy2:#1f5d96;--green:#0e9f6e;--red:#dc2626;--amber:#d97706;--bg:#f4f6fa;--line:#e6eaf0;--muted:#64748b;--ink:#0f1f33;--accS:#e7f7f0;--warnS:#fef3e2;--redS:#fdecec;--blueS:#e8f0fb;--violet:#7c3aed;--violetS:#f1eafe}
+body{background:var(--bg);color:var(--ink);font-size:14.5px}
+.card{border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 1px 2px rgba(15,31,51,.04),0 6px 20px rgba(15,31,51,.04)}
+.card h2{color:var(--ink);font-size:16px}
+.btn{border-radius:11px;padding:9px 16px;font-weight:700;transition:filter .15s,transform .05s}
+.btn:hover:not(:disabled){filter:brightness(1.07)}.btn:active:not(:disabled){transform:translateY(1px)}
+.btn.light{background:#eef2f7;color:var(--navy)}.btn.sm{padding:5px 11px;border-radius:9px}
+input,select,textarea{border-radius:10px;padding:9px 11px;border-color:#dfe5ec}
+input:focus,select:focus,textarea:focus{outline:2px solid #bcd3ee;border-color:var(--navy2)}
+th{background:#f7f9fc;color:var(--muted);font-weight:600;font-size:12.5px}
+td{border-bottom-color:#f0f2f6}
+.tbl-wrap{border-radius:12px;border-color:var(--line)}
+.badge{border-radius:999px;padding:3px 10px}
+.b-face{background:var(--accS);color:#047857}.b-abs{background:var(--redS);color:#b91c1c}.b-man{background:var(--warnS);color:#b45309}.b-gray{background:#eef1f5;color:#475569}.b-qr{background:var(--blueS);color:var(--navy2)}
+.b-vio{background:var(--violetS);color:var(--violet)}
+.banner{border-radius:12px}
+.modal{border-radius:20px;padding:22px}.modal h3{color:var(--ink);font-size:18px}
+.toast{border-radius:12px}
+/* القائمة الجانبية */
+#sidebar{background:#0f2944;box-shadow:none}
+#sidebar nav{gap:1px}
+#sidebar nav button{padding:9px 12px;font-size:13.8px;color:#c3d0de}
+#sidebar nav button.active{background:#fff;color:var(--navy);box-shadow:0 4px 14px rgba(0,0,0,.18)}
+#sidebar nav button .nb{margin-right:auto;background:#ef4444;color:#fff;border-radius:9px;font-size:11px;padding:1px 7px;font-style:normal}
+.nav-grp{font-size:11px;color:#7b8ca3;margin:12px 12px 3px;font-weight:700}
+.sb-av{background:#1f5d96;color:#fff}
+.topbar{padding:12px 22px}.topbar h1{color:var(--ink)}
+.topbar .term{background:var(--accS);color:#047857}
+.bellb{position:relative;width:40px;height:40px;border-radius:12px;background:#fff;border:1px solid var(--line);display:grid;place-items:center;color:var(--navy);cursor:pointer;padding:0}
+.bellb svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.bellb i{position:absolute;top:-5px;left:-5px;background:#ef4444;color:#fff;font-style:normal;font-size:11px;font-weight:700;border-radius:9px;padding:1px 6px}
+/* الرئيسية */
+.home-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.home-top h2{margin:0;font-size:22px}
+.kpis5{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:16px}
+.kp{display:flex;gap:12px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;box-shadow:0 6px 20px rgba(15,31,51,.04);cursor:default}
+.kp[data-go]{cursor:pointer}.kp[data-go]:hover{border-color:#bcd3ee}
+.kp .ib{width:46px;height:46px;border-radius:14px;display:grid;place-items:center;font-size:20px;flex:none}
+.kp b{font-size:24px;display:block;line-height:1.2}.kp span{color:var(--muted);font-size:12.5px}
+.g2{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;margin-bottom:16px}.g2.eq{grid-template-columns:1fr 1fr}.g2>.card{margin:0}
+@media(max-width:1000px){.g2,.g2.eq{grid-template-columns:1fr}}
+.wbars{display:flex;align-items:flex-end;gap:14px;height:170px;padding:10px 4px 0;border-bottom:1px solid var(--line)}
+.wbars div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:5px;font-size:11.5px;color:var(--muted);height:100%}
+.wbars span{width:100%;max-width:70px;border-radius:9px 9px 3px 3px;background:linear-gradient(#1f5d96,#3b82c4);transition:height .6s}
+.wbars span.low{background:linear-gradient(#d97706,#f59e0b)}.wbars b{color:var(--ink);font-size:12px}
+h3.sub{font-size:14px;margin:16px 0 10px}
+.qa{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.qa button{border:1px dashed #cfd8e3;border-radius:14px;padding:14px 8px;text-align:center;font:inherit;font-weight:700;font-size:13px;color:var(--navy);background:#fff;cursor:pointer}
+.qa button:hover{background:#f5f9ff;border-style:solid}.qa button span{display:block;font-size:22px;margin-bottom:4px}
+.li{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f0f2f6;cursor:default}.li:last-child{border:0}.li[data-go]{cursor:pointer}
+.li .av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:14px;flex:none}
+.li .t{flex:1;min-width:0}.li .t b{display:block;font-size:13.5px}.li .t small{color:var(--muted);font-size:12px}
+.av.g{background:var(--accS);color:#047857}.av.w{background:var(--warnS);color:#b45309}.av.r{background:var(--redS);color:#b91c1c}.av.b{background:var(--blueS);color:var(--navy2)}.av.v{background:var(--violetS);color:var(--violet)}
+.ann{border-right:4px solid var(--navy2);background:#f8fafd;border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.ann.pin{border-color:var(--amber);background:#fffaf2}.ann b{display:block}.ann .note{line-height:1.6}
+.ann p{margin:6px 0 0;white-space:pre-wrap;font-size:13.5px}
+.pbar{height:7px;border-radius:9px;background:#eef1f5;overflow:hidden;margin-top:6px}.pbar i{display:block;height:100%;border-radius:9px;background:var(--green)}
+.empty{color:var(--muted);text-align:center;padding:18px 8px;font-size:13px}
+/* الواجبات */
+.hw-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.hwc{background:#fff;border:1px solid var(--line);border-radius:18px;padding:16px;cursor:pointer;box-shadow:0 6px 20px rgba(15,31,51,.04);transition:border-color .15s,transform .15s}
+.hwc:hover{border-color:#bcd3ee;transform:translateY(-2px)}.hwc h3{margin:8px 0 4px;font-size:15.5px}
+.crumb{color:var(--muted);font-size:13px;margin-bottom:8px}.crumb a{color:var(--navy2);text-decoration:none}
+.hw-split{display:grid;grid-template-columns:1.6fr 1fr;gap:16px}.hw-split>.card{margin:0}
+@media(max-width:1000px){.hw-split{grid-template-columns:1fr}}
+.seg{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.seg button{border:0;background:#eef2f7;color:var(--muted);padding:6px 12px;border-radius:10px;font:inherit;font-weight:700;font-size:13px;cursor:pointer}
+.seg button.on{background:var(--navy);color:#fff}
+#hwBody tr{cursor:pointer}#hwBody tr.sel td{background:#f3f8ff}
+#hwBody input{width:62px;text-align:center;padding:5px;font-weight:700}
+.fchip{display:inline-flex;align-items:center;gap:5px;background:#eef1f5;color:#334155;border-radius:9px;padding:4px 10px;font-size:12.5px;font-weight:600;border:0;font-family:inherit;cursor:pointer;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip:hover{background:#e2e8f0}
+.prev{border:1px solid var(--line);border-radius:14px;min-height:120px;max-height:420px;overflow:auto;background:#f8fafc;display:grid;place-items:center;color:var(--muted)}
+.prev img{max-width:100%}.prev iframe{width:100%;height:400px;border:0}
+.mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}.mini div{background:#f7f9fc;border-radius:10px;padding:8px 10px;font-size:12.5px}
+/* ===== واجهة الطالب (هاتف) ===== */
+#studentView{max-width:560px;margin:0 auto;min-height:100vh;background:var(--bg);padding-bottom:84px;position:relative}
+.st-head{background:linear-gradient(135deg,#15406b,#1f5d96);color:#fff;padding:18px 18px 58px;border-radius:0 0 28px 28px}
+.st-hrow{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.st-hi{opacity:.85;font-size:12.5px;display:flex;gap:6px;align-items:center}.st-hi .pill{font-size:10.5px;padding:2px 8px}
+#stName{font-size:19px;display:block;margin:2px 0}.st-sm{opacity:.85;font-size:12.5px}
+.st-bell{position:relative;width:44px;height:44px;border-radius:14px;background:rgba(255,255,255,.16);border:0;color:#fff;display:grid;place-items:center;cursor:pointer;flex:none}
+.st-bell svg,.st-tabs svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.st-bell i{position:absolute;top:-5px;left:-5px;background:#ef4444;font-style:normal;font-size:11px;font-weight:700;border-radius:9px;padding:1px 6px}
+.st-body{padding:0 14px;margin-top:-44px}
+.st-tab{display:none}.st-tab.active{display:block}
+.st-tab .card{margin-bottom:12px;padding:15px}
+.st-title{color:#fff;margin:0 4px 14px;font-size:19px}
+#stHome>.card:first-child,#stHome>#faceStep{box-shadow:0 10px 26px rgba(15,31,51,.1)}
+#faceBtn,#scanBtn,#seStart{background:linear-gradient(135deg,#0e9f6e,#10b981);box-shadow:0 10px 22px rgba(14,159,110,.28);border-radius:16px}
+#scanBtn{background:linear-gradient(135deg,#15406b,#1f5d96);box-shadow:0 10px 22px rgba(21,64,107,.25)}
+.st-ring-card{display:flex;gap:14px;align-items:center}
+.ring{width:78px;height:78px;border-radius:50%;background:conic-gradient(var(--green) 0 0%,#e5eaf0 0);display:grid;place-items:center;flex:none;transition:background .6s}
+.ring div{width:62px;height:62px;border-radius:50%;background:#fff;display:grid;place-items:center;font-weight:800;font-size:16px}
+.as{display:flex;gap:10px;align-items:center;padding:10px 0;border-bottom:1px solid #f0f2f6;cursor:pointer}.as:last-child{border:0}
+.as .dt{width:46px;height:48px;border-radius:12px;display:grid;place-items:center;text-align:center;font-weight:800;font-size:13px;line-height:1.15;flex:none}
+.as .t{flex:1;min-width:0}.as .t b{display:block;font-size:13.8px}.as .t small{color:var(--muted)}
+.dt.r{background:var(--redS);color:#b91c1c}.dt.w{background:var(--warnS);color:#b45309}.dt.b{background:var(--blueS);color:var(--navy2)}.dt.g{background:var(--accS);color:#047857}.dt.n{background:#eef1f5;color:#64748b}
+.st-tabs{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:560px;display:flex;justify-content:space-around;background:#fff;border-top:1px solid var(--line);padding:7px 0 calc(8px + env(safe-area-inset-bottom));z-index:60;box-shadow:0 -6px 20px rgba(15,31,51,.06)}
+.st-tabs button{position:relative;display:flex;flex-direction:column;align-items:center;gap:3px;font:inherit;font-size:11px;color:var(--muted);font-weight:700;background:none;border:0;cursor:pointer;padding:2px 8px}
+.st-tabs button.on{color:var(--navy)}.st-tabs button.on svg{stroke-width:2.4}
+.st-tabs .nb{position:absolute;top:-3px;left:6px;background:#ef4444;color:#fff;font-style:normal;font-size:10px;border-radius:8px;padding:0 5px}
+.drop{border:2px dashed #b9c6d6;border-radius:18px;padding:20px;text-align:center;color:var(--navy);background:#f8fbff;cursor:pointer;display:block}
+.drop b{display:block;margin:4px 0}.drop input{display:none}
+.fl{display:flex;gap:10px;align-items:center;background:#fff;border:1px solid var(--line);border-radius:14px;padding:10px;margin-top:8px}
+.fl .ft{width:38px;height:38px;border-radius:10px;display:grid;place-items:center;font-size:10.5px;font-weight:800;background:var(--redS);color:#b91c1c;flex:none}
+.fl .t{flex:1;min-width:0;font-size:13px}.fl .t b{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-panel{position:fixed;inset:0;background:rgba(10,25,40,.45);z-index:90;display:flex;justify-content:center}
+.nt-box{background:var(--bg);width:100%;max-width:560px;height:100%;overflow:auto;padding:0 0 20px}
+.nt-head{position:sticky;top:0;background:#fff;padding:14px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line);z-index:2}.nt-head b{flex:1;font-size:16px}
+.nt{display:flex;gap:10px;padding:12px;border-radius:16px;background:#fff;border:1px solid var(--line);margin:10px 14px 0;cursor:pointer}
+.nt.u{border-color:#bcd3ee;background:#f5f9ff}.nt .ni{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;flex:none;font-size:18px}
+.nt .t{flex:1;min-width:0}.nt .t b{display:block;font-size:13.8px}.nt .t small{color:var(--muted);font-size:12px;display:block;line-height:1.6}
+.st-push{background:linear-gradient(135deg,#0f2944,#15406b);color:#fff;border:0}.st-push .note{color:#cbd5e1}
+@media(min-width:900px){#studentView{box-shadow:0 0 0 1px var(--line)}}
+body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:translateX(-50%);align-items:center}
+</style>
 </head>
 <body>
 
@@ -185,12 +303,14 @@ html,body{overflow-x:hidden}
 
 <!-- ============ واجهة الطالب ============ -->
 <div id="studentView" class="hidden">
-<header>
-  <div><h1>حضور الطلبة</h1><small>جامعة السراج</small></div>
-  <div class="hdr"><span id="stConn" class="pill"></span><button id="stInstallBtn" class="btn sm light hidden">⬇ تثبيت</button><button id="stLogout" class="btn sm light">خروج</button></div>
-</header>
-<div class="stu-wrap">
-  <div class="card"><h2 id="stName" style="margin-bottom:4px"></h2><div class="note" id="stInfo"></div></div>
+<div class="st-head">
+  <div class="st-hrow">
+    <div style="min-width:0"><div class="st-hi">مرحباً 👋 <span id="stConn" class="pill"></span></div><b id="stName"></b><div class="st-sm" id="stInfo"></div></div>
+    <button class="st-bell" id="stBell" aria-label="الإشعارات"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1112 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 004 0"/></svg><i id="stBellN" class="hidden"></i></button>
+  </div>
+</div>
+<div class="st-body">
+<section class="st-tab active" id="stHome">
   <div class="card hidden" id="selfEnrollCard">
     <h2>👤 تسجيل بصمة وجهك (مرة واحدة)</h2>
     <p class="note">ستُلتقط ٥ صور لوجهك بإرشاد التطبيق: مستقيم، ثم يمين، ثم يسار. اجلس في مكان مضاء جيداً، وأزل النظارة الشمسية أو الكمامة. تُستخدم البصمة للتحقق من حضورك فقط، ولا تُحفظ الصور.</p>
@@ -227,8 +347,13 @@ html,body{overflow-x:hidden}
       <button class="btn" id="mSend" style="margin-top:8px;width:100%">إرسال</button>
     </details>
   </div>
+  <div class="card st-ring-card" id="stRingCard"><div class="ring" id="stRing"><div>—</div></div><div style="flex:1"><b>نسبة حضورك</b><div class="note" id="stRingTxt">جارٍ الحساب...</div><span id="stRingChip"></span></div></div>
+  <div id="stAnnTop"></div>
+  <p class="note" style="text-align:center">بعد تسجيل الحضور تأكد من ظهور اسمك على شاشة التدريسي.</p>
+</section>
+<section class="st-tab" id="stAttT">
+  <h2 class="st-title">حضوري والأعذار</h2>
   <div class="card" id="stAttCard"><div class="row" style="justify-content:space-between"><h2 style="margin:0">📊 حضوري</h2><button class="btn sm light" id="stAttLoad">↻ تحديث</button></div><div id="stAtt" style="margin-top:8px" class="note">اضغط تحديث</div></div>
-  <div class="card" id="stResCard"><div class="row" style="justify-content:space-between"><h2 style="margin:0">🎓 درجاتي</h2><button class="btn sm light" id="stResLoad">↻ تحديث</button></div><div id="stRes" style="margin-top:8px" class="note">اضغط تحديث</div></div>
   <div class="card" id="stExCard">
     <h2>📄 تقديم عذر غياب</h2>
     <div class="grid" style="grid-template-columns:1fr 1fr">
@@ -241,9 +366,28 @@ html,body{overflow-x:hidden}
     <button class="btn green" id="xSend" style="width:100%;margin-top:10px">إرسال العذر</button>
     <div id="xList" style="margin-top:10px"></div>
   </div>
-  <p class="note" style="text-align:center">بعد الإرسال تأكد من ظهور اسمك على شاشة التدريسي.</p>
+</section>
+<section class="st-tab" id="stGrd">
+  <h2 class="st-title">درجاتي</h2>
+  <div class="card" id="stResCard"><div class="row" style="justify-content:space-between"><h2 style="margin:0">🎓 درجاتي</h2><button class="btn sm light" id="stResLoad">↻ تحديث</button></div><div id="stRes" style="margin-top:8px" class="note">اضغط تحديث</div></div>
+</section>
+<section class="st-tab" id="stMe">
+  <h2 class="st-title">حسابي</h2>
+  <div class="card" id="stMeCard"></div>
+  <div class="card"><div class="row"><button id="stInstallBtn" class="btn light hidden">⬇ تثبيت التطبيق</button><button id="stLogout" class="btn red">⎋ تسجيل الخروج</button></div></div>
   <p class="note" style="text-align:center;opacity:.7" id="stVer"></p>
+</section>
 </div>
+<div class="st-tabs" id="stTabs">
+  <button data-st="stHome" class="on"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>الرئيسية</span></button>
+  <button data-st="stAttT"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>حضوري</span></button>
+  <button data-st="stGrd"><svg viewBox="0 0 24 24"><path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2 9 2 12 0v-5"/></svg><span>درجاتي</span></button>
+  <button data-st="stMe"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-6 8-6s8 2 8 6"/></svg><span>حسابي</span></button>
+</div>
+<div id="ntPanel" class="nt-panel hidden"><div class="nt-box">
+  <div class="nt-head"><b>🔔 الإشعارات</b><button class="btn sm light" id="ntAllRead">تعليم الكل كمقروء</button><button class="btn sm light" id="ntClose">✕</button></div>
+  <div id="ntList"></div>
+</div></div>
 </div>
 
 <!-- ============ التطبيق ============ -->
@@ -251,16 +395,22 @@ html,body{overflow-x:hidden}
 <aside id="sidebar">
   <div class="sb-brand"><img src="icons/icon-192.png" alt=""><div><b>نظام الحضور والدرجات</b><small>جامعة السراج</small></div></div>
   <nav>
-    <button data-tab="tStudents"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>الطلبة والبصمات</span></button>
-    <button data-tab="tSession"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="10" r="3"/><path d="M7 17a5 5 0 0 1 10 0"/></svg><span>أخذ الحضور</span></button>
-    <button data-tab="tRecords"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg><span>السجلات والإنذارات</span></button>
-    <button data-tab="tExcuses"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg><span>الأعذار</span></button>
-    <button data-tab="tSchedule"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h3M8 18h6"/></svg><span>الجدول الأسبوعي</span></button>
-    <button data-tab="tGrades"><svg viewBox="0 0 24 24"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg><span>اللجنة الامتحانية</span></button>
-    <button data-tab="tQA"><svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg><span>ضمان الجودة</span></button>
-    <button data-tab="tUsers"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>المستخدمون</span></button>
-    <button data-tab="tOrg"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V10l7-5 7 5v11"/><path d="M9 21v-6h6v6"/></svg><span>الهيكل التنظيمي</span></button>
-    <button data-tab="tSettings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>الإعدادات</span></button>
+    <button data-tab="tHome"><svg viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>الرئيسية</span><i class="nb hidden"></i></button>
+    <div class="nav-grp">الطلبة والحضور</div>
+    <button data-tab="tStudents"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>الطلبة والبصمات</span><i class="nb hidden"></i></button>
+    <button data-tab="tSession"><svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="10" r="3"/><path d="M7 17a5 5 0 0 1 10 0"/></svg><span>أخذ الحضور</span><i class="nb hidden"></i></button>
+    <button data-tab="tRecords"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg><span>السجلات والإنذارات</span><i class="nb hidden"></i></button>
+    <button data-tab="tExcuses"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg><span>الأعذار</span><i class="nb hidden"></i></button>
+    <div class="nav-grp">التعليم</div>
+    <button data-tab="tSchedule"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h3M8 18h6"/></svg><span>الجدول الأسبوعي</span><i class="nb hidden"></i></button>
+    <button data-tab="tGrades"><svg viewBox="0 0 24 24"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg><span>اللجنة الامتحانية</span><i class="nb hidden"></i></button>
+    <div class="nav-grp">التواصل</div>
+    <button data-tab="tAnn"><svg viewBox="0 0 24 24"><path d="M3 11v2a2 2 0 002 2h2l6 4V5L7 9H5a2 2 0 00-2 2z"/><path d="M17 8a5 5 0 010 8"/></svg><span>الإعلانات</span><i class="nb hidden"></i></button>
+    <div class="nav-grp">الإدارة</div>
+    <button data-tab="tQA"><svg viewBox="0 0 24 24"><path d="M12 2l3 7h7l-5.5 4.5L18 21l-6-4-6 4 1.5-7.5L2 9h7z"/></svg><span>ضمان الجودة</span><i class="nb hidden"></i></button>
+    <button data-tab="tUsers"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg><span>المستخدمون</span><i class="nb hidden"></i></button>
+    <button data-tab="tOrg"><svg viewBox="0 0 24 24"><path d="M3 21h18"/><path d="M5 21V10l7-5 7 5v11"/><path d="M9 21v-6h6v6"/></svg><span>الهيكل التنظيمي</span><i class="nb hidden"></i></button>
+    <button data-tab="tSettings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>الإعدادات</span><i class="nb hidden"></i></button>
   </nav>
   <div class="sb-foot">
     <div class="sb-user"><div class="sb-av" id="sbAv">م</div><div><b id="userBox"></b><small id="roleBox"></small></div></div>
@@ -274,6 +424,7 @@ html,body{overflow-x:hidden}
 <header class="topbar">
   <button id="menuBtn" aria-label="القائمة">☰</button>
   <h1 id="pageTitle"></h1>
+  <button id="topBell" class="bellb" title="بانتظار قرارك"><svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 1112 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 004 0"/></svg><i class="hidden" id="topBellN"></i></button>
   <div class="scope">
     <label>الكلية</label><select id="scopeCollege"></select>
     <label>القسم</label><select id="scopeDept"></select>
@@ -283,6 +434,41 @@ html,body{overflow-x:hidden}
 <main>
 <div id="localBanner" class="banner hidden">⚠ وضع تجريبي محلي: لم تُضَف إعدادات Firebase في ملف <b>firebase-config.js</b>، لذلك تُحفظ البيانات على هذا الجهاز فقط.</div>
 <div id="noDeptBanner" class="banner hidden">لا توجد أقسام مرتبطة بحسابك بعد. راجع مدير النظام أو عميد الكلية.</div>
+
+<!-- الرئيسية -->
+<section id="tHome" class="tab">
+  <div class="home-top"><div><h2 id="hHello"></h2><div class="note" id="hSub"></div></div><button class="btn light sm" id="hRefresh">↻ تحديث</button></div>
+  <div class="kpis5" id="hKpis"></div>
+  <div class="g2">
+    <div class="card"><h2>📊 الحضور خلال آخر الأيام</h2><div class="wbars" id="hWeek"></div>
+      <h3 class="sub">إجراءات سريعة</h3><div class="qa" id="hQuick"></div></div>
+    <div class="card"><h2 id="hPendT">⏳ بانتظار قرارك</h2><div id="hPending"></div></div>
+  </div>
+  <div class="g2 eq">
+    <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">📣 آخر الإعلانات</h2><button class="btn light sm" data-go="tAnn" id="hAnnBtn">＋ إعلان</button></div><div id="hAnn" style="margin-top:10px"></div></div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">🗓 محاضرات اليوم</h2><button class="btn light sm" data-go="tRecords">السجلات</button></div><div id="hToday" style="margin-top:10px"></div></div>
+  </div>
+</section>
+
+<!-- الإعلانات -->
+<section id="tAnn" class="tab">
+  <div class="g2" style="grid-template-columns:1fr 1.3fr">
+    <div class="card" id="annForm">
+      <h2>📣 إعلان جديد — <span class="deptName"></span></h2>
+      <label>العنوان</label><input id="anTitle" maxlength="120" placeholder="مثال: تأجيل امتحان المعالجات">
+      <label style="margin-top:8px">نص الإعلان</label><textarea id="anBody" maxlength="2000" placeholder="اكتب التفاصيل..."></textarea>
+      <div class="grid" style="grid-template-columns:1fr 1fr 1fr;margin-top:8px">
+        <div><label>المرحلة</label><select id="anStage"></select></div>
+        <div><label>الدراسة</label><select id="anShift"></select></div>
+        <div><label>الشعبة</label><select id="anSection"></select></div>
+      </div>
+      <div class="row" style="margin-top:8px"><label style="display:flex;gap:6px;align-items:center;margin:0;color:#1c2733"><input type="checkbox" id="anPin" style="width:auto"> تثبيت في الأعلى</label></div>
+      <div class="note" id="anCount" style="margin-top:6px"></div>
+      <button class="btn green" id="anSend" style="width:100%;margin-top:10px">📣 نشر الإعلان</button>
+    </div>
+    <div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">الإعلانات المنشورة</h2><button class="btn light sm" id="anReload">↻</button></div><div id="anList" style="margin-top:10px"></div></div>
+  </div>
+</section>
 
 <!-- الطلبة -->
 <section id="tStudents" class="tab">
@@ -433,7 +619,7 @@ html,body{overflow-x:hidden}
       <h2 style="margin:0">الإنذارات والحرمان — <span class="deptName"></span></h2>
       <div class="row">
         <select id="wFilter" style="width:auto"><option value="">كل الحالات</option><option value="w1">إنذار أول</option><option value="w2">إنذار ثانٍ</option><option value="dep">محروم</option></select>
-        <button class="btn light" id="wLetters">🖨 كتب الإنذار والحرمان</button>
+        <button class="btn light" id="wLetters">🖨 كتب الإنذار والحرمان</button><button class="btn light" id="wNotify">🔔 إشعار الطلبة بإنذاراتهم</button>
         <button class="btn light" id="wExport">⬇ Excel</button>
       </div>
     </div>
@@ -772,6 +958,6 @@ html,body{overflow-x:hidden}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=4.1.0"></script>
+<script src="app.js?v=5.2.0"></script>
 </body>
 </html>
