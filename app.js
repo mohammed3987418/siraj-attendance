@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '6.1.0';
+const APP_VERSION = '6.2.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -299,8 +299,11 @@ function setDept(id){
     $('#gDistCard') && $('#gDistCard').classList.add('hidden'); $('#gSheetCard') && $('#gSheetCard').classList.add('hidden');
     if ($('#tGrades') && $('#tGrades').classList.contains('active')) loadGradeSheets(); else if (App.org) renderGradesTab(); }
 }
+// دراسة المستخدم: صباحي / مسائي / كلاهما (فارغ = كلاهما)
+const myShifts = () => (App.user && (App.user.shifts || []).length) ? App.user.shifts : null;
+const shiftOK = sh => { const m = myShifts(); return !m || m.includes(sh); };
 function fillDeptOptions(){
-  const d = App.dept || {stages:[], shifts:[], sections:[]};
+  const d0 = App.dept || {stages:[], shifts:[], sections:[]}, d = Object.assign({}, d0, {shifts:(d0.shifts || []).filter(shiftOK)});
   const opts = (arr, all) => (all ? `<option value="">${all}</option>` : '') + (arr || []).map(x => `<option>${esc(x)}</option>`).join('');
   $$('select.optStage').forEach(s => { const v = s.value; s.innerHTML = opts(d.stages); if ((d.stages || []).includes(v)) s.value = v; });
   $$('select.optShift').forEach(s => { const v = s.value; s.innerHTML = opts(d.shifts); if ((d.shifts || []).includes(v)) s.value = v; });
@@ -336,7 +339,7 @@ function subSessions(){
   else if (u.role === 'dean') f = [['collegeId', d.collegeId], ['deptId', d.id], ['term', T]];
   else f = [['deptId', d.id], ['term', T]];
   if (f) App.subs.sessions = DB.listen('att_sessions', f, list => {
-    App.sessions = list; App.pending = list.filter(x => x._pending).length;
+    App.sessions = list.filter(x => shiftOK(x.shift)); App.pending = list.filter(x => x._pending).length;
     renderRecords(); renderCourseList(); updateConn(); scheduleReconcile(); renderWarnings(); renderToday();
   });
   renderRecords(); renderCourseList(); updateConn();
@@ -538,7 +541,7 @@ function dupMap(all){
 function filteredStudents(){
   const st = $('#fStage').value, sh = $('#fShift').value, fp = $('#fPrint').value, q = $('#fSearch').value.trim();
   const all = deptStudents(), dups = fp === 'dup' ? dupMap(all) : null;
-  return all.filter(s => (!st || s.stage === st) && (!sh || s.shift === sh) &&
+  return all.filter(s => shiftOK(s.shift) && (!st || s.stage === st) && (!sh || s.shift === sh) &&
     (!fp || (fp === 'yes' && s.prints.length > 0) || (fp === 'no' && !s.prints.length) || (fp === 'self' && s.self && s.prints.length) || (fp === 'dup' && dups[s.id])) &&
     (!q || s.name.includes(q) || s.id.includes(q)));
 }
@@ -1553,6 +1556,7 @@ $('#ovExportBtn').onclick = () => {
    ===================================================================== */
 const G_STATUS = {draft:['مسودة','b-gray'], submitted:['مُرسل إلى رئيس القسم','b-man'], returned:['أُعيد للتدريسي','b-abs'], approved:['مُصادق عليه','b-face']};
 const G_TPL = {
+  bologna:{max:50, comps:[['الاختبارات القصيرة (Quizzes)',15,'manual','cum'],['الواجبات والتقارير',10,'manual','cum'],['المشاركة والنشاط الصفي',10,'manual','cum'],['الحضور',5,'attendance','cum'],['امتحان منتصف الفصل (Mid)',10,'manual','mid']]},
   theory:{max:40, comps:[['الامتحان الشهري',20,'manual'],['الاختبارات اليومية',10,'manual'],['الواجبات والتقارير',5,'manual'],['الحضور والمشاركة',5,'attendance']]},
   lab:{max:50, comps:[['الامتحان الشهري النظري',15,'manual'],['الامتحان العملي',15,'manual'],['تقارير المختبر',10,'manual'],['الاختبارات اليومية',5,'manual'],['الحضور',5,'attendance']]},
   simple:{max:40, comps:[['الامتحان الشهري الأول',15,'manual'],['الامتحان الشهري الثاني',15,'manual'],['الاختبارات اليومية',10,'manual']]}
@@ -1577,45 +1581,90 @@ function parseComps(txt){
   });
 }
 const compsText = comps => (comps || []).map(c => `${c[0]}${c[2] === 'attendance' ? '*' : ''}:${c[1]}`).join('، ');
-let crEditing = null;
+let crEditing = null, crRows = [];
+const CR_DEF = {bologna:{sae:40, mid:10, final:50, rows:[['الاختبارات القصيرة (Quizzes)',15,'manual'],['الواجبات والتقارير',10,'manual'],['المشاركة والنشاط الصفي',10,'manual'],['الحضور',5,'attendance']]},
+  annual:{sae:40, mid:0, final:60, rows:[['الامتحان الشهري',20,'manual'],['الاختبارات اليومية',10,'manual'],['الواجبات والتقارير',5,'manual'],['الحضور',5,'attendance']]}};
+const crSys = () => (document.querySelector('input[name=crSys]:checked') || {}).value || 'bologna';
+function crSysUI(){
+  const b = crSys() === 'bologna';
+  $('#crMidBox').classList.toggle('hidden', !b);
+  $('#crSaeLbl').textContent = b ? 'درجة التراكمي' : 'درجة السعي';
+  $('#crCompsLbl').textContent = b ? 'فروع التراكمي (ما يتكوّن منه التراكمي)' : 'مكوّنات السعي';
+  crSumUI();
+}
+function crSumUI(){
+  const sum = r2(crRows.reduce((a, r) => a + (+r[1] || 0), 0)), tgt = +$('#crSae').value || 0, b = crSys() === 'bologna';
+  const total = tgt + (b ? +$('#crMid').value || 0 : 0) + (+$('#crFinal').value || 0);
+  $('#crSum').className = 'badge ' + (sum === tgt && total === 100 ? 'b-face' : 'b-man');
+  $('#crSum').textContent = `مجموع الفروع ${sum} / ${tgt}` + (total !== 100 ? ` — المجموع الكلي ${total} (يجب 100)` : sum === tgt ? ' ✓' : ' ✗');
+}
+function renderCrRows(){
+  $('#crCompRows').innerHTML = crRows.map((r, i) => `<tr data-ci="${i}"><td><input data-k="0" value="${esc(r[0])}" placeholder="مثال: الاختبارات القصيرة"></td>
+    <td><input data-k="1" type="number" min="0" max="100" step="0.5" value="${r[1]}"></td>
+    <td><label style="display:flex;gap:6px;align-items:center;margin:0;font-weight:500"><input data-k="2" type="checkbox" style="width:auto" ${r[2] === 'attendance' ? 'checked' : ''}> من الحضور</label></td>
+    <td><button class="btn sm light" data-crx="${i}" type="button">✕</button></td></tr>`).join('') || '<tr><td colspan="4" class="note">لا توجد فروع — اضغط «＋ إضافة فرع»</td></tr>';
+  crSumUI();
+}
+$('#crCompRows').oninput = $('#crCompRows').onchange = e => {
+  const tr = e.target.closest('tr[data-ci]'), k = e.target.dataset.k; if (!tr || k == null) return;
+  const r = crRows[+tr.dataset.ci]; if (k === '2') r[2] = e.target.checked ? 'attendance' : 'manual'; else r[+k] = k === '1' ? +e.target.value : e.target.value; crSumUI();
+};
+$('#crCompRows').onclick = e => { const b = e.target.closest('[data-crx]'); if (b){ crRows.splice(+b.dataset.crx, 1); renderCrRows(); } };
+$('#crAddComp').onclick = () => { crRows.push(['', 0, 'manual']); renderCrRows(); const ins = $$('#crCompRows input[data-k="0"]'); ins[ins.length - 1].focus(); };
+['#crSae','#crMid','#crFinal'].forEach(x => $(x).oninput = crSumUI);
+$$('input[name=crSys]').forEach(r => r.onchange = () => { const d = CR_DEF[crSys()]; $('#crSae').value = d.sae; $('#crMid').value = d.mid; $('#crFinal').value = d.final; crRows = d.rows.map(x => x.slice()); renderCrRows(); crSysUI(); });
+function crSetSys(sys){ $$('input[name=crSys]').forEach(r => r.checked = r.value === sys); }
+const sysOf = c => c.system || (c.comps || []).some(x => x[3] === 'mid') ? (c.system || 'bologna') : 'annual';
 function renderCourses(){
   if (!$('#crBody')) return;
   const ed = canEditCourses();
   $('#crsForm').classList.toggle('hidden', !ed); $('#crSave').parentElement.classList.toggle('hidden', !ed);
+  if (ed && !crRows.length && !crEditing){ crSetSys('bologna'); crRows = CR_DEF.bologna.rows.map(x => x.slice()); renderCrRows(); crSysUI(); }
   const d = App.dept, order = d ? d.stages : [];
   $('#crBody').innerHTML = courseList().sort((a, b) => order.indexOf(a.stage) - order.indexOf(b.stage) || a.name.localeCompare(b.name, 'ar'))
-    .map(c => `<tr><td>${esc(c.stage)}</td><td>${esc(c.name)}</td><td dir="ltr">${esc(c.code || '')}</td><td>${c.units}</td><td>${c.sae}</td><td>${c.final}</td>
-      <td class="note">${esc(compsText(c.comps))}</td>
-      <td class="row">${ed ? `<button class="btn sm light" data-cre="${esc(c.id)}">تعديل</button><button class="btn sm red" data-crd="${esc(c.id)}">حذف</button>` : ''}</td></tr>`).join('')
+    .map(c => { const bo = sysOf(c) === 'bologna', mid = (c.comps || []).find(x => x[3] === 'mid');
+      return `<tr><td>${esc(c.stage)}</td><td><b>${esc(c.name)}</b></td><td dir="ltr">${esc(c.code || '')}</td><td>${c.units}</td>
+      <td><span class="badge ${bo ? 'b-vio' : 'b-qr'}">${bo ? 'بولونيا' : 'تقليدي'}</span></td>
+      <td>${bo ? `تراكمي ${r2(c.sae - (mid ? mid[1] : 0))} + منتصف ${mid ? mid[1] : 0} + نهائي ${c.final}` : `سعي ${c.sae} + نهائي ${c.final}`}</td>
+      <td class="note">${esc((c.comps || []).filter(x => x[3] !== 'mid').map(x => `${x[0]}${x[2] === 'attendance' ? ' (حضور)' : ''}: ${x[1]}`).join('، '))}</td>
+      <td class="row">${ed ? `<button class="btn sm light" data-cre="${esc(c.id)}">تعديل</button><button class="btn sm red" data-crd="${esc(c.id)}">حذف</button>` : ''}</td></tr>`; }).join('')
     || `<tr><td colspan="8" class="note">${d ? 'لم تُضف مواد بعد' : 'اختر القسم'}</td></tr>`;
 }
 function renderAsgCourseList(){
   let dl = $('#crsNames'); if (!dl){ dl = document.createElement('datalist'); dl.id = 'crsNames'; document.body.appendChild(dl); }
   dl.innerHTML = [...new Set(courseList().map(c => c.name))].map(n => `<option value="${esc(n)}">`).join('');
 }
-$('#crClear').onclick = () => { crEditing = null; ['#crName','#crCode'].forEach(x => $(x).value = ''); $('#crNote').textContent = ''; };
+$('#crClear').onclick = () => { crEditing = null; ['#crName','#crCode'].forEach(x => $(x).value = ''); $('#crNote').textContent = '';
+  const sys = crSys(), d = CR_DEF[sys]; $('#crSae').value = d.sae; $('#crMid').value = d.mid; $('#crFinal').value = d.final; crRows = d.rows.map(x => x.slice()); renderCrRows(); crSysUI(); };
 $('#crSave').onclick = () => {
   const d = App.dept; if (!d) return toast('اختر القسم أولاً', 'err');
-  const name = $('#crName').value.trim(), stage = $('#crStage').value, units = +$('#crUnits').value, sae = +$('#crSae').value, fin = +$('#crFinal').value;
-  const comps = parseComps($('#crComps').value);
+  const sys = crSys(), bo = sys === 'bologna', name = $('#crName').value.trim(), stage = $('#crStage').value, units = +$('#crUnits').value;
+  const cum = +$('#crSae').value || 0, mid = bo ? +$('#crMid').value || 0 : 0, fin = +$('#crFinal').value || 0;
   if (!name) return toast('اكتب اسم المادة', 'err');
-  if (sae + fin !== 100) return toast(`مجموع السعي والنهائي يجب أن يكون 100 (الحالي ${sae + fin})`, 'err');
-  if (comps.some(c => !c)) return toast('صيغة المكوّنات غير صحيحة — مثال: الامتحان الشهري:20، الحضور*:10', 'err');
-  const sum = r2(comps.reduce((a, c) => a + c[1], 0));
-  if (comps.length && sum !== sae) return toast(`مجموع مكوّنات السعي ${sum} لا يساوي درجة السعي ${sae}`, 'err');
+  if (cum + mid + fin !== 100) return toast(`المجموع الكلي يجب أن يكون 100 (الحالي ${cum + mid + fin})`, 'err');
+  const rows = crRows.map(r => [String(r[0] || '').trim(), +r[1] || 0, r[2] === 'attendance' ? 'attendance' : 'manual']);
+  if (rows.some(r => !r[0])) return toast('اكتب اسم كل فرع', 'err');
+  const sum = r2(rows.reduce((a, r) => a + r[1], 0));
+  if (rows.length && sum !== cum) return toast(`مجموع ${bo ? 'فروع التراكمي' : 'مكوّنات السعي'} ${sum} لا يساوي ${cum}`, 'err');
   const dup = courseList().find(c => c.name === name && c.stage === stage && c.id !== crEditing);
   if (dup) return toast('المادة موجودة مسبقاً في هذه المرحلة', 'err');
+  const comps = (rows.length ? rows : [[bo ? 'التراكمي' : 'السعي', cum, 'manual']]).map(r => bo ? r.concat('cum') : r);
+  if (bo && mid) comps.push(['امتحان منتصف الفصل (Mid)', mid, 'manual', 'mid']);
   const id = crEditing || ('k' + Date.now().toString(36));
   bg(DB.set('att_courses', d.id, {collegeId:d.collegeId, deptId:d.id, updatedAt:nowISO(),
-    courses:{[id]:{stage, name, code:$('#crCode').value.trim(), units, sae, final:fin, comps}}}, true).p, crEditing ? 'تم تعديل المادة' : 'تمت إضافة المادة');
+    courses:{[id]:{stage, name, code:$('#crCode').value.trim(), units, system:sys, cum, mid, sae:r2(cum + mid), final:fin, comps}}}, true).p, crEditing ? 'تم تعديل المادة' : 'تمت إضافة المادة');
+  audit(crEditing ? 'تعديل مادة' : 'إضافة مادة', `${name} — ${stage} — ${bo ? 'بولونيا' : 'تقليدي'}`);
   $('#crClear').onclick();
 };
 $('#crBody').onclick = async e => {
   const b = e.target.closest('button'); if (!b || !App.dept) return;
   if (b.dataset.cre){
     const c = courseList().find(x => x.id === b.dataset.cre); crEditing = c.id;
+    const bo = sysOf(c) === 'bologna', mid = (c.comps || []).find(x => x[3] === 'mid');
+    crSetSys(bo ? 'bologna' : 'annual');
     $('#crStage').value = c.stage; $('#crName').value = c.name; $('#crCode').value = c.code || ''; $('#crUnits').value = c.units;
-    $('#crSae').value = c.sae; $('#crFinal').value = c.final; $('#crComps').value = compsText(c.comps);
+    $('#crSae').value = r2(c.sae - (mid ? mid[1] : 0)); $('#crMid').value = mid ? mid[1] : 0; $('#crFinal').value = c.final;
+    crRows = (c.comps || []).filter(x => x[3] !== 'mid').map(x => [x[0], x[1], x[2]]); renderCrRows(); crSysUI();
     $('#crNote').textContent = 'تعديل: ' + c.name; $('#crName').focus();
   }
   if (b.dataset.crd && await confirmBox('حذف المادة', 'ستُحذف المادة من قائمة مواد القسم. جداول الدرجات المحفوظة لا تُحذف.', 'حذف'))
@@ -1656,7 +1705,8 @@ async function loadGradeSheets(){
 $('#gRefreshBtn').onclick = loadGradeSheets;
 $('#gListBody').onclick = e => { const b = e.target.closest('button[data-gopen]'); if (b){ $('#gSel').value = b.dataset.gopen; openGrades(); } };
 $('#gOpenBtn').onclick = () => openGrades();
-const defComponents = def => def.comps.map((c, i) => ({id:'k' + (i + 1), name:c[0], max:c[1], type:c[2]}));
+const compObj = (c, i, p) => Object.assign({id:p + (i + 1), name:c[0], max:c[1], type:c[2]}, c[3] ? {group:c[3]} : {});
+const defComponents = def => def.comps.map((c, i) => compObj(c, i, 'k'));
 async function openGrades(){
   const id = $('#gSel').value, t = gTargets().find(x => x.id === id); if (!t) return;
   const d = App.dept;
@@ -1669,7 +1719,7 @@ async function openGrades(){
     const tp = G_TPL.theory;
     doc = {collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term, course:t.course, stage:t.stage, shift:t.shift, section:t.section || '',
       instructorUid:App.user.uid, instructorName:App.user.name || App.user.email || '', maxTotal:tp.max, finalMax:100 - tp.max,
-      components:tp.comps.map((c, i) => ({id:'c' + (i + 1), name:c[0], max:c[1], type:c[2]})), marks:{}, overrides:{}, finals:{}, status:'draft', createdAt:nowISO()};
+      components:tp.comps.map((c, i) => compObj(c, i, 'c')), marks:{}, overrides:{}, finals:{}, status:'draft', createdAt:nowISO()};
   }
   // تطبيق توزيع اللجنة الامتحانية على الجداول غير المُرسلة
   if (def && ['draft','returned'].includes(doc.status) && def.comps && def.comps.length){
@@ -1722,7 +1772,7 @@ $('#gAddComp').onclick = () => { const n = G.doc.components.length + 1; let id =
 $$('#gDistCard [data-tpl]').forEach(b => b.onclick = async () => {
   const tp = G_TPL[b.dataset.tpl]; if (!G) return;
   if (Object.keys(G.doc.marks).length && !(await confirmBox('تطبيق قالب', 'توجد درجات مُدخلة. تغيير المكوّنات قد يمسح درجات المكوّنات المحذوفة. هل تريد المتابعة؟', 'تطبيق'))) return;
-  G.doc.maxTotal = tp.max; G.doc.finalMax = 100 - tp.max; G.doc.components = tp.comps.map((c, i) => ({id:'c' + (i + 1), name:c[0], max:c[1], type:c[2]})); G.dirty = true; renderDist(); renderSheet();
+  G.doc.maxTotal = tp.max; G.doc.finalMax = 100 - tp.max; G.doc.components = tp.comps.map((c, i) => compObj(c, i, 'c')); G.dirty = true; renderDist(); renderSheet();
 });
 $('#gSaveDist').onclick = () => { if (!distSumNote()) return toast('يجب أن يساوي مجموع المكوّنات مجموع السعي', 'err'); saveGrades('تم حفظ التوزيع'); };
 // نسبة حضور الطالب في هذه المادة من سجلات المحاضرات (بالساعات)
@@ -1754,7 +1804,7 @@ const shownTotal = (sae, fin, fin2, dep) => dep ? '—' : fin2 != null ? r2(sae 
 function renderSheet(){
   if (!G) return;
   const doc = G.doc, ed = gCanEdit(), sf = seesFinals(), ef = canEditFinals();
-  $('#gHead').innerHTML = `<tr><th>#</th><th>الرقم</th><th>الاسم</th>${doc.components.map(c => `<th>${esc(c.name)}<div class="note">(${c.max})${c.type === 'attendance' ? ' تلقائي' : ''}</div></th>`).join('')}<th>الحضور %</th><th>السعي<div class="note">(${doc.maxTotal})</div></th>
+  $('#gHead').innerHTML = `<tr><th>#</th><th>الرقم</th><th>الاسم</th>${doc.components.map(c => `<th>${c.group ? `<span class="grp-tag ${c.group}">${c.group === 'mid' ? 'منتصف الفصل' : 'تراكمي'}</span><br>` : ''}${esc(c.name)}<div class="note">(${c.max})${c.type === 'attendance' ? ' تلقائي' : ''}</div></th>`).join('')}<th>الحضور %</th><th>السعي<div class="note">(${doc.maxTotal})</div></th>
     ${sf ? `<th style="background:#e6eef7">النهائي<div class="note">(${doc.finalMax})</div></th><th style="background:#e6eef7">الدور الثاني<div class="note">(${doc.finalMax})</div></th><th style="background:#e6eef7">الدرجة النهائية<div class="note">(100)</div></th><th style="background:#e6eef7">النتيجة</th>` : ''}</tr>`;
   $('#gBody').innerHTML = G.roster.map((st, i) => {
     const a = attendanceRatio(st.id), sae = studentTotal(st.id), fin = finalOf(doc, st.id), fin2 = finalOf2(doc, st.id);
@@ -2159,10 +2209,16 @@ function renderToday(){
   const dow = new Date().getDay();
   const list = slotList().filter(s => s.day === dow && (s.instr === App.user.uid || is('head','dean','super') && !slotList().some(x => x.instr === App.user.uid))).sort((a, b) => a.from.localeCompare(b.from));
   const doneToday = s => App.sessions.some(x => x.date === today() && x.course === s.course && x.stage === s.stage && x.shift === s.shift && (!s.section || !x.section || x.section === s.section));
-  $('#todayList').innerHTML = list.map(s => `<button class="chip" data-today="${esc(s.id)}"><b>${esc(s.from)}</b> — ${esc(s.course)}<br><span class="note">${esc(s.stage)} / ${esc(s.shift)} / ${esc(s.section || 'الكل')} — ${esc(s.room || '')}</span> ${doneToday(s) ? '<span class="badge b-face">✓ سُجّل</span>' : ''}</button>`).join('')
-    || '<span class="note">لا توجد محاضرات لك اليوم في الجدول الأسبوعي.</span>';
+  const asg = myAsg(), inSched = a => list.some(s => s.course === a.course && s.stage === a.stage && s.shift === a.shift && (s.section || '') === (a.section || ''));
+  const rest = asg.map((a, i) => ({a, i})).filter(x => !inSched(x.a));
+  $('#todayList').innerHTML = (list.map(s => `<button class="chip" data-today="${esc(s.id)}"><b>${esc(s.from)}</b> — ${esc(s.course)}<br><span class="note">${esc(s.stage)} / ${esc(s.shift)} / ${esc(s.section || 'الكل')} — ${esc(s.room || '')}</span> ${doneToday(s) ? '<span class="badge b-face">✓ سُجّل</span>' : ''}</button>`).join('')
+    || `<span class="note">${asg.length ? 'لا توجد محاضرات لك اليوم في الجدول الأسبوعي (أو الجدول غير مكتمل) — اختر المادة من موادك:' : 'لا توجد محاضرات لك اليوم في الجدول الأسبوعي.'}</span>`)
+    + (rest.length ? `<div style="width:100%"><div class="note" style="margin-top:6px">${list.length ? 'موادك الأخرى:' : ''}</div><div class="asg-chips">${rest.map(({a, i}) => `<button class="chip" data-asgi="${i}">📘 <b>${esc(a.course)}</b><br><span class="note">${esc(a.stage)} / ${esc(a.shift)} / ${esc(a.section || 'كل الشعب')}</span></button>`).join('')}</div></div>` : '');
 }
 $('#todayList').onclick = e => {
+  const ai = e.target.closest('button[data-asgi]');
+  if (ai){ $('#cAsg').value = ai.dataset.asgi; applyAsg(); const def = courseDef(myAsg()[+ai.dataset.asgi].course, myAsg()[+ai.dataset.asgi].stage);
+    $('#cDate').value = today(); pastUI(); $('#sessionSetup').scrollIntoView({behavior:'smooth'}); toast('تم اختيار المادة — اختر طريقة التسجيل واضغط بدء', 'ok'); return; }
   const b = e.target.closest('button[data-today]'); if (!b) return;
   const s = slotList().find(x => x.id === b.dataset.today); if (!s) return;
   if (!$('#cAsgBox').classList.contains('hidden')){
@@ -2430,20 +2486,27 @@ function renderUsers(){
   $('#usersBody').innerHTML = list.map(u => `<tr><td>${esc(u.name)}${u.id === me.uid ? ' <span class="badge b-gray">أنت</span>' : ''}</td>
     <td dir="ltr" style="text-align:right">${esc(u.email)}</td>
     <td><span class="badge ${u.role === 'disabled' ? 'b-abs' : 'b-face'}">${ROLES[normRole(u.role)] || u.role}</span></td>
-    <td>${esc(collegeName(u.collegeId))}</td><td>${(u.assignments || []).length
+    <td>${esc(collegeName(u.collegeId))}</td><td>${(u.shifts || []).length === 1 ? `<span class="badge ${u.shifts[0].includes('مسائ') ? 'b-vio' : 'b-man'}">${esc(u.shifts[0])}</span>` : '<span class="badge b-gray">كلاهما</span>'}</td><td>${(u.assignments || []).length
       ? u.assignments.map(a => `<div>📘 ${esc(a.course)} <span class="note">— ${esc(deptName(a.deptId))} / ${esc(a.stage)} / ${esc(a.shift)} / ${esc(a.section || 'كل الشعب')}</span></div>`).join('')
       : (u.deptIds || []).map(d => esc(deptName(d))).join('، ')}</td>
     <td>${canEditUser(u) ? `<button class="btn sm light" data-edit="${esc(u.id)}">تعديل</button>` : ''}</td></tr>`).join('')
-    || '<tr><td colspan="6" class="note">لا يوجد مستخدمون</td></tr>';
+    || '<tr><td colspan="7" class="note">لا يوجد مستخدمون</td></tr>';
 }
 let umEditing = null, umAsg = [], umDeptsAllowed = [];
+const umCourses = {}; // مواد كل قسم (من «المواد الدراسية»)
+async function loadUmCourses(ids){
+  await Promise.all(ids.filter(id => !umCourses[id]).map(id => (App.courses && App.courses.deptId === id ? Promise.resolve(App.courses) : DB.get('att_courses', id).catch(() => null))
+    .then(doc => umCourses[id] = Object.values((doc && doc.courses) || {}))));
+}
+const allShifts = () => [...new Set(deptList().flatMap(d => d.shifts || []))];
+const umShiftList = () => { const v = $('#umShifts').value; return v ? [v] : []; };
 function umAllowedDepts(){
   const me = App.user;
   return is('super') ? deptList() : is('dean') ? deptList().filter(d => d.collegeId === me.collegeId) : deptList().filter(d => (me.deptIds || []).includes(d.id));
 }
 function newAsg(deptId){
-  const d = (App.org.depts || {})[deptId] || {stages:[''], shifts:[''], sections:[]};
-  return {deptId, course:'', stage:d.stages[0], shift:d.shifts[0], section:''};
+  const d = (App.org.depts || {})[deptId] || {stages:[''], shifts:[''], sections:[]}, sh = umShiftList();
+  return {deptId, course:'', stage:d.stages[0], shift:(sh.length && d.shifts.includes(sh[0])) ? sh[0] : d.shifts[0], section:''};
 }
 function renderAsg(){
   const opt = (arr, v, all) => (all ? `<option value="" ${!v ? 'selected' : ''}>${all}</option>` : '') + (arr || []).map(x => `<option ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('');
@@ -2451,9 +2514,12 @@ function renderAsg(){
     const d = (App.org.depts || {})[a.deptId] || {};
     return `<tr data-i="${i}">
       <td><select data-f="deptId">${umDeptsAllowed.map(x => `<option value="${esc(x.id)}" ${x.id === a.deptId ? 'selected' : ''}>${esc(x.name)}</option>`).join('')}</select></td>
-      <td><input data-f="course" value="${esc(a.course)}" placeholder="اسم المادة" list="crsNames" style="min-width:160px"></td>
       <td><select data-f="stage">${opt(d.stages, a.stage)}</select></td>
-      <td><select data-f="shift">${opt(d.shifts, a.shift)}</select></td>
+      <td>${(() => { const cs = (umCourses[a.deptId] || []).filter(c => c.stage === a.stage).map(c => c.name).sort((x, y) => x.localeCompare(y, 'ar'));
+        const known = !a.course || cs.includes(a.course);
+        return cs.length && known && !a.free ? `<select data-f="course" style="min-width:170px"><option value="">— اختر المادة —</option>${cs.map(n => `<option ${n === a.course ? 'selected' : ''}>${esc(n)}</option>`).join('')}<option value="__free">✎ مادة أخرى (كتابة)</option></select>`
+          : `<input data-f="course" value="${esc(a.course)}" placeholder="${cs.length ? 'اسم المادة' : 'لا توجد مواد لهذه المرحلة — اكتب الاسم'}" style="min-width:170px">`; })()}</td>
+      <td><select data-f="shift">${opt((d.shifts || []).filter(x => !umShiftList().length || umShiftList().includes(x)), a.shift)}</select></td>
       <td><select data-f="section">${opt(d.sections, a.section, 'كل الشعب')}</select></td>
       <td><button class="btn sm red" data-rm="${i}" type="button">✕</button></td></tr>`;
   }).join('') || '<tr><td colspan="6" class="note">اضغط "+ إضافة مادة"</td></tr>';
@@ -2461,7 +2527,9 @@ function renderAsg(){
 $('#umAsgBody').oninput = $('#umAsgBody').onchange = e => {
   const tr = e.target.closest('tr[data-i]'), f = e.target.dataset.f; if (!tr || !f) return;
   const a = umAsg[+tr.dataset.i]; a[f] = e.target.value;
-  if (f === 'deptId' && e.type === 'change'){ Object.assign(a, newAsg(a.deptId), {course:a.course}); renderAsg(); }
+  if (f === 'course' && a.course === '__free'){ a.course = ''; a.free = true; renderAsg(); const ins = tr.parentElement.querySelectorAll('input[data-f=course]'); if (ins.length) [...ins].pop().focus(); return; }
+  if (f === 'stage' && e.type === 'change'){ a.course = ''; a.free = false; renderAsg(); }
+  if (f === 'deptId' && e.type === 'change'){ Object.assign(a, newAsg(a.deptId)); loadUmCourses([a.deptId]).then(renderAsg); }
 };
 $('#umAsgBody').onclick = e => { const b = e.target.closest('button[data-rm]'); if (b){ umAsg.splice(+b.dataset.rm, 1); renderAsg(); } };
 $('#umAddAsg').onclick = () => {
@@ -2477,6 +2545,7 @@ function umRoleUI(){
   if (r === 'instructor' && !umAsg.length) $('#umAddAsg').onclick();
 }
 $('#umRole').onchange = umRoleUI;
+$('#umShifts').onchange = () => { const sh = umShiftList(); if (sh.length) umAsg.forEach(a => { const d = (App.org.depts || {})[a.deptId]; if (d && d.shifts.includes(sh[0])) a.shift = sh[0]; }); renderAsg(); };
 function openUserModal(u){
   umEditing = u || null;
   const me = App.user;
@@ -2495,8 +2564,12 @@ function openUserModal(u){
   $('#umDepts').innerHTML = Object.entries(byCol).map(([c, ds]) => `<div class="grp">${esc(collegeName(c))}</div>` +
     ds.map(d => `<label><input type="checkbox" value="${esc(d.id)}" ${sel.has(d.id) ? 'checked' : ''}>${esc(d.name)}</label>`).join('')).join('')
     || '<span class="note">لا توجد أقسام</span>';
+  const shs = allShifts(), cur = u ? (u.shifts || []) : [];
+  $('#umShifts').innerHTML = `<option value="">كلاهما (${esc(shs.join(' و '))})</option>` + shs.map(x => `<option value="${esc(x)}">${esc(x)} فقط</option>`).join('');
+  $('#umShifts').value = cur.length === 1 ? cur[0] : '';
   umAsg = u ? clone(u.assignments || []) : [];
   renderAsg(); umRoleUI();
+  loadUmCourses(umDeptsAllowed.map(d => d.id)).then(renderAsg);
   $('#umCred').classList.add('hidden'); $('#umSave').classList.remove('hidden'); $('#umCancel').textContent = 'إلغاء';
   $('#umNote').textContent = App.mode === 'local' ? 'وضع محلي: يُنشأ سجل المستخدم فقط دون حساب دخول.' : (u ? '' : 'يتطلب إنشاء الحساب اتصالاً بالإنترنت.');
   $('#userModal').classList.add('show');
@@ -2508,9 +2581,10 @@ $('#umSave').onclick = async () => {
   const r = $('#umRole').value;
   let collegeId = $('#umCollege').value, deptIds = $$('#umDepts input:checked').map(x => x.value), assignments = [];
   if (r === 'instructor'){
-    assignments = umAsg.map(a => ({deptId:a.deptId, course:String(a.course || '').trim(), stage:a.stage, shift:a.shift, section:a.section || ''}));
+    assignments = umAsg.map(a => ({deptId:a.deptId, course:String(a.course || '').replace('__free', '').trim(), stage:a.stage, shift:a.shift, section:a.section || ''}));
     if (!assignments.length) return toast('أضف مادة واحدة على الأقل للتدريسي', 'err');
-    if (assignments.some(a => !a.course || !a.deptId)) return toast('اكتب اسم كل مادة', 'err');
+    if (assignments.some(a => !a.course || !a.deptId)) return toast('اختر أو اكتب اسم كل مادة', 'err');
+    const sh = umShiftList(); if (sh.length && assignments.some(a => !sh.includes(a.shift))) return toast(`المستخدم مخصّص لـ«${sh[0]}» — غيّر الدراسة في المواد أو اجعلها «كلاهما»`, 'err');
     deptIds = [...new Set(assignments.map(a => a.deptId))];
     if (!is('super')) collegeId = App.user.collegeId;
     else { const d = (App.org.depts || {})[deptIds[0]]; if (d) collegeId = d.collegeId; }
@@ -2520,7 +2594,7 @@ $('#umSave').onclick = async () => {
   $('#umSave').disabled = true;
   try{
     if (umEditing){
-      await DB.update('att_users', umEditing.id, {role:r, collegeId, deptIds, assignments, updatedAt:nowISO()}).p;
+      await DB.update('att_users', umEditing.id, {role:r, collegeId, deptIds, assignments, shifts:umShiftList(), updatedAt:nowISO()}).p;
       toast('تم التحديث', 'ok'); $('#userModal').classList.remove('show'); audit('تعديل مستخدم', `${umEditing.name} — ${ROLES[r]}`);
     } else {
       const name = $('#umName').value.trim(), email = $('#umEmail').value.trim().toLowerCase(), pass = $('#umPass').value;
@@ -2533,7 +2607,7 @@ $('#umSave').onclick = async () => {
         const cred = await sec.auth().createUserWithEmailAndPassword(email, pass);
         uid = cred.user.uid; await sec.auth().signOut();
       }
-      await DB.set('att_users', uid, {name, email, role:r, collegeId, deptIds, assignments, createdAt:nowISO(), createdBy:App.user.uid}).p;
+      await DB.set('att_users', uid, {name, email, role:r, collegeId, deptIds, assignments, shifts:umShiftList(), createdAt:nowISO(), createdBy:App.user.uid}).p;
       const link = location.origin + location.pathname.replace(/index\.html$/, '');
       const txt = `نظام حضور الطلبة — جامعة السراج\nالاسم: ${name}\nالصلاحية: ${ROLES[r]}\n` +
         (assignments.length ? 'المواد: ' + assignments.map(a => `${a.course} (${deptName(a.deptId)} / ${a.stage} / ${a.shift} / ${a.section || 'كل الشعب'})`).join('، ') + '\n' : '') +

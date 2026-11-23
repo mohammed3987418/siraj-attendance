@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="6.1.0">
+<meta name="app-version" content="6.2.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -119,6 +119,15 @@ th{background:#f0f4f8;color:var(--navy);position:sticky;top:0}
 .steps-guide div{background:#eef6f3;border:1px solid #cfe5dc;border-radius:10px;padding:8px 10px;font-size:14px;color:#1c2733}
 .steps-guide div b:first-child{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#0f766e;color:#fff;margin-left:6px}
 .sel-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#f7f9fc;border:1px solid var(--line,#e6eaf0);border-radius:12px;padding:8px 10px;margin-bottom:10px}
+.sys-pick{display:flex;gap:10px;flex-wrap:wrap}
+.sys-opt{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px;border:1.5px solid var(--line,#e7eaf3);border-radius:14px;padding:12px 14px;cursor:pointer;background:#fff;transition:border-color .15s,box-shadow .15s;color:var(--ink,#0b1630)}
+.sys-opt input{display:none}.sys-opt b{font-size:15px}.sys-opt span{color:var(--muted,#667085);font-size:12.5px;font-weight:500}
+.sys-opt:has(input:checked){border-color:#7c3aed;box-shadow:0 0 0 4px rgba(124,58,237,.12);background:linear-gradient(135deg,#f6f3ff,#f1f6ff)}
+.grp-tag{display:inline-block;font-size:10.5px;font-weight:700;border-radius:6px;padding:0 6px;margin-bottom:2px}
+.grp-tag.cum{background:#eaf1ff;color:#1d4ed8}.grp-tag.mid{background:#fff6e5;color:#b45309}
+#userModal .modal{width:min(920px,100%)}
+#umAsgBody select,#umAsgBody input{min-width:96px}
+.asg-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
 img.sf{width:34px;height:34px;border-radius:50%;object-fit:cover;vertical-align:middle;border:2px solid #cfe5dc}
 .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
 </style>
@@ -818,18 +827,28 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
 <section id="tGrades" class="tab">
   <div class="card" id="crsCard">
     <h2>المواد الدراسية وتوزيع الدرجات — <span class="deptName"></span></h2>
-    <p class="note">تحددها اللجنة الامتحانية (أو رئيس القسم). يلتزم التدريسي بهذا التوزيع عند إدخال السعي. اكتب المكوّنات بالشكل: <b>الاسم:الدرجة</b> مفصولة بفاصلة، وضع <b>*</b> بعد الاسم ليُحسب تلقائياً من الحضور. مثال: <span dir="rtl">الامتحان الشهري:20، الاختبارات اليومية:10، الحضور*:10</span></p>
+    <p class="note">يحددها رئيس القسم أو اللجنة الامتحانية لكل مرحلة. تظهر هذه المواد في قائمة عند إضافة التدريسيين، ويلتزم التدريسي بتوزيعها عند إدخال السعي.</p>
     <div class="grid" id="crsForm">
       <div><label>المرحلة</label><select id="crStage" class="optStage"></select></div>
-      <div><label>اسم المادة</label><input id="crName"></div>
-      <div><label>رمز المادة</label><input id="crCode" dir="ltr"></div>
+      <div><label>اسم المادة</label><input id="crName" placeholder="مثال: المعالجات الدقيقة"></div>
+      <div><label>رمز المادة</label><input id="crCode" dir="ltr" placeholder="AIET2103"></div>
       <div><label>عدد الوحدات</label><input id="crUnits" type="number" min="0" step="0.5" value="3"></div>
-      <div><label>درجة السعي</label><input id="crSae" type="number" min="0" max="100" value="40"></div>
-      <div><label>درجة الامتحان النهائي</label><input id="crFinal" type="number" min="0" max="100" value="60"></div>
-      <div style="grid-column:1/-1"><label>مكوّنات السعي</label><input id="crComps" value="الامتحان الشهري:20، الاختبارات اليومية:10، الواجبات والتقارير:5، الحضور*:5"></div>
+      <div style="grid-column:1/-1"><label>نظام توزيع الدرجات</label>
+        <div class="sys-pick" id="crSysPick">
+          <label class="sys-opt"><input type="radio" name="crSys" value="bologna" checked><b>🎓 بولونيا</b><span>تراكمي 40 + منتصف الفصل 10 + نهائي 50</span></label>
+          <label class="sys-opt"><input type="radio" name="crSys" value="annual"><b>📘 تقليدي</b><span>سعي + امتحان نهائي</span></label>
+        </div></div>
+      <div><label id="crSaeLbl">درجة التراكمي</label><input id="crSae" type="number" min="0" max="100" value="40"></div>
+      <div id="crMidBox"><label>امتحان منتصف الفصل (Mid)</label><input id="crMid" type="number" min="0" max="100" value="10"></div>
+      <div><label>درجة الامتحان النهائي</label><input id="crFinal" type="number" min="0" max="100" value="50"></div>
+      <div style="grid-column:1/-1">
+        <div class="row" style="justify-content:space-between"><label id="crCompsLbl" style="margin:0">فروع التراكمي (ما يتكوّن منه)</label><span id="crSum" class="badge b-gray"></span></div>
+        <div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>اسم الفرع</th><th style="width:110px">الدرجة</th><th style="width:150px">يُحسب من الحضور تلقائياً</th><th style="width:50px"></th></tr></thead><tbody id="crCompRows"></tbody></table></div>
+        <button class="btn sm light" id="crAddComp" type="button" style="margin-top:6px">＋ إضافة فرع</button>
+      </div>
     </div>
     <div class="row" style="margin-top:10px"><button class="btn" id="crSave">إضافة / تعديل المادة</button><button class="btn light" id="crClear">تفريغ</button><span id="crNote" class="note"></span></div>
-    <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>المرحلة</th><th>المادة</th><th>الرمز</th><th>الوحدات</th><th>السعي</th><th>النهائي</th><th>مكوّنات السعي</th><th></th></tr></thead><tbody id="crBody"></tbody></table></div>
+    <div class="tbl-wrap" style="margin-top:10px"><table><thead><tr><th>المرحلة</th><th>المادة</th><th>الرمز</th><th>الوحدات</th><th>النظام</th><th>التوزيع</th><th>الفروع</th><th></th></tr></thead><tbody id="crBody"></tbody></table></div>
   </div>
   <div class="card">
     <h2>جداول الدرجات — <span class="deptName"></span> — <span id="gTerm"></span></h2>
@@ -850,7 +869,7 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
     <div class="row" style="margin:10px 0">
       <label style="margin:0;color:#1c2733">مجموع السعي:</label><input id="gMax" type="number" min="1" max="100" value="40" style="width:90px">
       <span class="note">قوالب جاهزة:</span>
-      <button class="btn sm light" data-tpl="theory">نظري (40)</button>
+      <button class="btn sm light" data-tpl="bologna">بولونيا (40 + 10)</button><button class="btn sm light" data-tpl="theory">نظري (40)</button>
       <button class="btn sm light" data-tpl="lab">نظري + عملي (50)</button>
       <button class="btn sm light" data-tpl="simple">شهري + يومي (40)</button>
     </div>
@@ -987,7 +1006,7 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
       </div>
     </div>
     <p class="note">مدير النظام: كل الجامعة. العميد: أقسام كليته كلها. رئيس القسم: قسمه (الطلبة، والحضور، والتقارير، وحسابات التدريسيين والموظفين). موظف التسجيل: الطلبة والبصمات. التدريسي: أخذ الحضور في أقسامه وسجلات محاضراته.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الكلية</th><th>الأقسام / المواد</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>الاسم</th><th>البريد</th><th>الصلاحية</th><th>الكلية</th><th>الدراسة</th><th>الأقسام / المواد</th><th></th></tr></thead><tbody id="usersBody"></tbody></table></div>
   </div>
 </section>
 
@@ -1080,11 +1099,12 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
       <div id="umPassBox"><label>الرمز (كلمة المرور — ٦ أحرف على الأقل)</label><div class="row" style="flex-wrap:nowrap"><input id="umPass" dir="ltr"><button class="btn sm light" id="umGen" type="button" title="توليد رمز عشوائي">🎲</button></div></div>
       <div><label>الصلاحية</label><select id="umRole"></select></div>
       <div><label>الكلية</label><select id="umCollege"></select></div>
+      <div><label>الدراسة</label><select id="umShifts"></select></div>
     </div>
     <div id="umAsgBox" style="margin-top:12px">
       <div class="row" style="justify-content:space-between"><b style="color:var(--navy)">المواد التي يدرّسها</b><button class="btn sm" id="umAddAsg" type="button">+ إضافة مادة</button></div>
-      <div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>القسم</th><th>اسم المادة</th><th>المرحلة</th><th>الدراسة</th><th>الشعبة</th><th></th></tr></thead><tbody id="umAsgBody"></tbody></table></div>
-      <p class="note">يأخذ التدريسي الحضور لهذه المواد فقط، وتُملأ المرحلة والدراسة والشعبة تلقائياً عند اختيار المادة.</p>
+      <div class="tbl-wrap" style="margin-top:6px"><table><thead><tr><th>القسم</th><th>المرحلة</th><th>المادة</th><th>الدراسة</th><th>الشعبة</th><th></th></tr></thead><tbody id="umAsgBody"></tbody></table></div>
+      <p class="note">اختر المرحلة فتظهر مواد تلك المرحلة كما أدخلها رئيس القسم في «المواد الدراسية». يأخذ التدريسي الحضور لهذه المواد فقط.</p>
     </div>
     <div id="umDeptBox"><label style="margin-top:10px">الأقسام</label><div class="chk-list" id="umDepts"></div></div>
     <div id="umCred" class="banner hidden" style="margin-top:10px"></div>
@@ -1154,6 +1174,6 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=6.1.0"></script>
+<script src="app.js?v=6.2.0"></script>
 </body>
 </html>
