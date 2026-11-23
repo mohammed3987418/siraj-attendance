@@ -167,12 +167,13 @@ service cloud.firestore {
           && resource.data.get('p', []).size() == 0
           && request.resource.data.p.size() <= 6
           && request.resource.data.pAt == request.time);
-      allow delete: if isHeadOf(resource.data.deptId);   // الحذف النهائي لرئيس القسم حصراً
+      allow delete: if isHeadOf(resource.data.deptId) || isSuper();   // الحذف النهائي: رئيس القسم، ومدير النظام عند حذف حسابات الدخول
     }
 
     // كلمات المرور الأولية لحسابات الطلبة: يقرؤها رئيس القسم فقط (لإعادة الإنشاء والحذف النهائي)
     match /att_cred/{uid} {
-      allow read, update, delete: if isHeadOf(resource.data.deptId);
+      allow read, update: if isHeadOf(resource.data.deptId);
+      allow delete: if isHeadOf(resource.data.deptId) || isSuper();
       allow create: if canManageDept(request.resource.data.collegeId, request.resource.data.deptId);
     }
 

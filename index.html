@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="5.3.1">
+<meta name="app-version" content="6.1.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="حضور السراج">
-<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1/dist/face-api.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -282,15 +282,163 @@ h3.sub{font-size:14px;margin:16px 0 10px}
 @media(min-width:900px){#studentView{box-shadow:0 0 0 1px var(--line)}}
 body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:translateX(-50%);align-items:center}
 </style>
+<style id="v6css">
+/* ===================== الإصدار 6: تصميم حديث ===================== */
+:root{--ink:#0b1630;--muted:#667085;--line:#e7eaf3;--bg:#f5f7fc;--navy:#1e3a8a;--navy2:#2563eb;--pri1:#2563eb;--pri2:#7c3aed;--green:#10b981;--green2:#059669;--red:#ef4444;--amber:#f59e0b;
+  --accS:#e8faf3;--warnS:#fff6e5;--redS:#fdeeee;--blueS:#eaf1ff;--violetS:#f3edff;--violet:#7c3aed;--r:20px;
+  --sh1:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.06);--sh2:0 12px 32px -12px rgba(16,24,40,.18),0 4px 10px -4px rgba(16,24,40,.06);--grad:linear-gradient(135deg,#2563eb 0%,#7c3aed 100%)}
+body{font-family:'IBM Plex Sans Arabic','Cairo',Tahoma,sans-serif;color:var(--ink);background:var(--bg);
+  background-image:radial-gradient(1200px 600px at 100% -10%,rgba(124,58,237,.07),transparent 60%),radial-gradient(900px 500px at -10% 10%,rgba(37,99,235,.07),transparent 60%);background-attachment:fixed;-webkit-font-smoothing:antialiased}
+::selection{background:rgba(124,58,237,.18)}
+*::-webkit-scrollbar{width:10px;height:10px}*::-webkit-scrollbar-thumb{background:#cfd6e4;border-radius:10px;border:3px solid transparent;background-clip:content-box}
+/* حركة ظهور الصفحات */
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes popIn{from{opacity:0;transform:translateY(12px) scale(.97)}to{opacity:1;transform:none}}
+.tab.active,.st-tab.active{animation:fadeUp .35s ease both}
+.tab.active>.card,.tab.active>*>.card,.kpis5>.kp{animation:fadeUp .45s ease both}
+.kpis5>.kp:nth-child(2){animation-delay:.04s}.kpis5>.kp:nth-child(3){animation-delay:.08s}.kpis5>.kp:nth-child(4){animation-delay:.12s}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+/* البطاقات */
+.card{background:rgba(255,255,255,.92);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--sh1);padding:20px;transition:box-shadow .2s,border-color .2s}
+.card:hover{box-shadow:var(--sh2)}
+.card h2{font-size:16.5px;font-weight:700;letter-spacing:-.1px}
+.note{color:var(--muted)}
+/* الأزرار */
+.btn{border-radius:12px;font-weight:600;padding:10px 18px;background:var(--grad);color:#fff;border:0;box-shadow:0 6px 16px -6px rgba(37,99,235,.55);transition:transform .15s,box-shadow .15s,filter .15s}
+.btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 10px 22px -8px rgba(37,99,235,.6);filter:none}
+.btn:disabled{opacity:.5;box-shadow:none}
+.btn.green{background:linear-gradient(135deg,#10b981,#059669);box-shadow:0 6px 16px -6px rgba(16,185,129,.55)}
+.btn.red{background:linear-gradient(135deg,#f43f5e,#dc2626);box-shadow:0 6px 16px -6px rgba(239,68,68,.5)}
+.btn.amber{background:linear-gradient(135deg,#f59e0b,#ea580c);box-shadow:0 6px 16px -6px rgba(245,158,11,.5)}
+.btn.light{background:#fff;color:var(--navy);border:1px solid var(--line);box-shadow:var(--sh1)}
+.btn.light:hover:not(:disabled){background:#f7f9ff;border-color:#c9d6f5;box-shadow:var(--sh1)}
+.btn.sm{padding:6px 12px;border-radius:10px;font-size:13px}
+/* الحقول */
+input,select,textarea{border:1px solid #dfe3ee;border-radius:12px;padding:10px 12px;background:#fff;transition:border-color .15s,box-shadow .15s;font-family:inherit}
+input:focus,select:focus,textarea:focus{outline:none;border-color:#8ea8f5;box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+label{font-weight:600;color:#344054;font-size:13px}
+/* الجداول */
+.tbl-wrap{border:1px solid var(--line);border-radius:16px;background:#fff}
+th{background:#f8f9fd;color:#475467;font-weight:600;font-size:12.5px;position:sticky;top:0;z-index:1;border-bottom:1px solid var(--line)}
+td{border-bottom:1px solid #f1f3f9}
+tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
+/* الشارات */
+.badge{border-radius:999px;padding:3px 10px;font-weight:600;font-size:12px;letter-spacing:.1px}
+.b-face{background:var(--accS);color:#047857}.b-abs{background:var(--redS);color:#be123c}.b-man{background:var(--warnS);color:#b45309}
+.b-qr{background:var(--blueS);color:#1d4ed8}.b-gray{background:#f1f3f8;color:#475467}.b-vio{background:var(--violetS);color:#6d28d9}
+.banner{border-radius:14px;border:1px solid #fde7b0;background:linear-gradient(135deg,#fffaf0,#fff6e5)}
+/* القائمة الجانبية */
+#sidebar{background:linear-gradient(180deg,#0b1630 0%,#111f45 55%,#1b1f5c 100%);position:sticky;overflow:hidden}
+#sidebar::before{content:"";position:absolute;inset:auto -80px -80px auto;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(124,58,237,.35),transparent 70%);pointer-events:none}
+#sidebar::after{content:"";position:absolute;inset:-60px auto auto -60px;width:200px;height:200px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,.3),transparent 70%);pointer-events:none}
+#sidebar>*{position:relative;z-index:1}
+.sb-brand{border-bottom:1px solid rgba(255,255,255,.07);padding:20px 16px}
+.sb-brand img{box-shadow:0 8px 20px -6px rgba(124,58,237,.6)}
+.sb-brand b{font-size:15.5px;letter-spacing:-.2px}
+#sidebar nav{padding:10px 10px;overflow:auto}
+#sidebar nav button{border-radius:12px;color:#aab6d3;font-weight:500;padding:9.5px 12px;transition:background .15s,color .15s}
+#sidebar nav button svg{opacity:.85}
+#sidebar nav button:hover{background:rgba(255,255,255,.06);color:#fff}
+#sidebar nav button.active{background:linear-gradient(135deg,rgba(37,99,235,.95),rgba(124,58,237,.95));color:#fff;box-shadow:0 10px 24px -10px rgba(124,58,237,.8)}
+#sidebar nav button.active svg{opacity:1}
+.nav-grp{color:#6f7ea3;letter-spacing:.3px;font-size:11px;font-weight:600}
+.sb-foot{border-top:1px solid rgba(255,255,255,.07);background:rgba(255,255,255,.03)}
+.sb-av{background:var(--grad);color:#fff;box-shadow:0 6px 14px -4px rgba(124,58,237,.6)}
+/* الشريط العلوي (زجاجي) */
+.topbar{background:rgba(255,255,255,.72);backdrop-filter:saturate(180%) blur(14px);-webkit-backdrop-filter:saturate(180%) blur(14px);border-bottom:1px solid rgba(231,234,243,.8)}
+.topbar h1{font-size:20px;font-weight:700;letter-spacing:-.3px}
+.topbar .term{background:linear-gradient(135deg,#e8faf3,#eaf1ff);color:#065f46;border:1px solid #d3f3e5}
+.bellb{border-radius:14px;box-shadow:var(--sh1);transition:transform .15s}.bellb:hover{transform:translateY(-1px)}
+/* الرئيسية */
+.home-top{background:linear-gradient(135deg,#1e3a8a 0%,#4f46e5 55%,#7c3aed 100%);color:#fff;border-radius:24px;padding:24px 26px;margin-bottom:18px;position:relative;overflow:hidden;box-shadow:0 20px 40px -20px rgba(79,70,229,.7)}
+.home-top::after{content:"";position:absolute;left:-40px;top:-60px;width:260px;height:260px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.18),transparent 70%)}
+.home-top::before{content:"";position:absolute;left:140px;bottom:-90px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(16,185,129,.35),transparent 70%)}
+.home-top h2{color:#fff;font-size:24px;position:relative;z-index:1}.home-top .note{color:rgba(255,255,255,.82);position:relative;z-index:1}
+.home-top .btn.light{background:rgba(11,22,48,.28);color:#fff;border:1px solid rgba(255,255,255,.35);box-shadow:none;position:relative;z-index:2;backdrop-filter:blur(6px)}
+.home-top .btn.light:hover:not(:disabled){background:rgba(11,22,48,.4);color:#fff}
+.kp{border-radius:20px;padding:18px;background:#fff;border:1px solid var(--line);box-shadow:var(--sh1);position:relative;overflow:hidden;transition:transform .18s,box-shadow .18s}
+.kp[data-go]:hover{transform:translateY(-3px);box-shadow:var(--sh2)}
+.kp .ib{width:50px;height:50px;border-radius:16px;font-size:21px;color:#fff!important}
+.kp .ib.g{background:linear-gradient(135deg,#34d399,#059669)}.kp .ib.b{background:linear-gradient(135deg,#60a5fa,#2563eb)}
+.kp .ib.w{background:linear-gradient(135deg,#fbbf24,#ea580c)}.kp .ib.v{background:linear-gradient(135deg,#a78bfa,#7c3aed)}.kp .ib.r{background:linear-gradient(135deg,#fb7185,#e11d48)}
+.kp b{font-size:28px;font-weight:700;letter-spacing:-.5px}
+.kp::after{content:"";position:absolute;left:-30px;bottom:-30px;width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,rgba(37,99,235,.06),transparent 70%)}
+.wbars span{background:linear-gradient(180deg,#7c3aed,#2563eb);border-radius:10px 10px 4px 4px;box-shadow:0 8px 16px -8px rgba(79,70,229,.6)}
+.wbars span.low{background:linear-gradient(180deg,#fbbf24,#f97316)}
+.qa button{border:1px solid var(--line);background:linear-gradient(180deg,#fff,#f8f9ff);border-radius:16px;transition:transform .15s,box-shadow .15s,border-color .15s;color:var(--navy)}
+.qa button:hover{transform:translateY(-2px);box-shadow:var(--sh2);border-color:#c9d6f5;background:#fff}
+.qa button span{font-size:24px}
+.li{border-radius:12px;padding:10px 8px;transition:background .12s}.li[data-go]:hover{background:#f6f8ff}
+.ann{border-right-width:4px;border-radius:14px;background:linear-gradient(135deg,#f8faff,#fff)}
+.pbar{background:#eef1f8}.pbar i{background:linear-gradient(90deg,#10b981,#34d399)}
+/* النوافذ والتنبيهات */
+.modal-bg{background:rgba(11,22,48,.45);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.modal-bg.show .modal{animation:popIn .25s ease both}
+.modal{border-radius:24px;box-shadow:0 30px 60px -20px rgba(11,22,48,.45)}
+.toast{border-radius:14px;background:rgba(11,22,48,.92);color:#fff;backdrop-filter:blur(8px);box-shadow:var(--sh2);animation:popIn .25s ease both}
+.toast.ok{background:linear-gradient(135deg,#059669,#10b981)}.toast.err{background:linear-gradient(135deg,#e11d48,#ef4444)}
+.seg button{border-radius:10px}.seg button.on{background:var(--grad)}
+/* شاشة الدخول */
+.login-wrap{background:linear-gradient(135deg,#0b1630 0%,#1e3a8a 50%,#5b21b6 100%);position:relative;overflow:hidden}
+.login-wrap::before,.login-wrap::after{content:"";position:absolute;border-radius:50%;filter:blur(10px);pointer-events:none}
+.login-wrap::before{width:520px;height:520px;right:-140px;top:-160px;background:radial-gradient(circle,rgba(124,58,237,.55),transparent 65%)}
+.login-wrap::after{width:460px;height:460px;left:-120px;bottom:-160px;background:radial-gradient(circle,rgba(16,185,129,.35),transparent 65%)}
+.login-shell{position:relative;z-index:1;display:grid;grid-template-columns:1.05fr 1fr;width:min(940px,100%);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);border-radius:28px;overflow:hidden;backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 40px 80px -30px rgba(0,0,0,.55);animation:popIn .45s ease both}
+.login-hero{padding:38px 34px;color:#fff;display:flex;flex-direction:column;gap:16px}
+.login-hero img{width:68px;height:68px;border-radius:18px;box-shadow:0 12px 30px -8px rgba(0,0,0,.5)}
+.login-hero h1{margin:6px 0 0;font-size:27px;line-height:1.45;letter-spacing:-.3px}
+.login-hero p{margin:0;color:rgba(255,255,255,.78);line-height:1.8}
+.login-feats{display:grid;gap:10px;margin-top:6px}
+.login-feats div{display:flex;gap:10px;align-items:center;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 12px;font-size:14px}
+.login-feats span{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;background:rgba(255,255,255,.14);font-size:17px;flex:none}
+.login{width:auto;background:#fff;border-radius:0;border:0;margin:0;padding:38px 34px;text-align:right;box-shadow:none;display:flex;flex-direction:column;justify-content:center}
+.login:hover{box-shadow:none}
+.login h2{font-size:22px;margin:0 0 4px}
+.login .btn{padding:13px;font-size:16px}
+.login input{padding:12px 14px;font-size:15px}
+@media(max-width:780px){.login-shell{grid-template-columns:1fr}.login-hero{padding:26px 24px}.login-feats{display:none}.login{padding:26px 24px}}
+/* ===== هاتف الطالب ===== */
+#studentView{background:transparent}
+.st-head{background:linear-gradient(135deg,#1e3a8a 0%,#4f46e5 55%,#7c3aed 100%);border-radius:0 0 32px 32px;padding:20px 20px 64px;position:relative;overflow:hidden;box-shadow:0 20px 40px -24px rgba(79,70,229,.8)}
+.st-head::after{content:"";position:absolute;left:-50px;top:-70px;width:220px;height:220px;border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.2),transparent 70%)}
+.st-head::before{content:"";position:absolute;right:40%;bottom:-80px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,rgba(16,185,129,.4),transparent 70%)}
+.st-hrow{position:relative;z-index:1}
+.st-bell{background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.22);backdrop-filter:blur(6px);border-radius:16px}
+.st-tab .card{border-radius:22px;box-shadow:0 10px 30px -16px rgba(16,24,40,.25)}
+.st-title{font-size:21px;letter-spacing:-.3px}
+.st-tabs{bottom:12px;width:calc(100% - 24px);max-width:536px;border-radius:22px;background:rgba(255,255,255,.85);backdrop-filter:saturate(180%) blur(16px);-webkit-backdrop-filter:saturate(180%) blur(16px);border:1px solid rgba(231,234,243,.9);box-shadow:0 16px 36px -14px rgba(11,22,48,.35);padding:8px 4px}
+.st-tabs button{border-radius:14px;padding:6px 10px;transition:background .15s,color .15s}
+.st-tabs button.on{color:#4f46e5;background:linear-gradient(135deg,rgba(37,99,235,.1),rgba(124,58,237,.12))}
+#studentView{padding-bottom:100px}
+#faceBtn,#seStart{background:linear-gradient(135deg,#10b981,#059669)!important;border-radius:18px!important;box-shadow:0 14px 28px -12px rgba(16,185,129,.8)!important}
+#scanBtn{background:var(--grad)!important;border-radius:18px!important;box-shadow:0 14px 28px -12px rgba(79,70,229,.8)!important}
+.ring{background:conic-gradient(var(--green) 0 0%,#e8ecf5 0)}
+.ring div{font-size:17px}
+.nt{border-radius:18px;transition:transform .12s}.nt:active{transform:scale(.99)}
+.nt.u{background:linear-gradient(135deg,#f3f6ff,#faf7ff);border-color:#d6defa}
+.nt-head{background:rgba(255,255,255,.9);backdrop-filter:blur(10px)}
+/* الجوال: جدول ونموذج */
+@media(max-width:900px){.home-top{border-radius:20px;padding:18px}.home-top h2{font-size:20px}}
+</style>
 </head>
 <body>
 
 <!-- ============ تسجيل الدخول ============ -->
 <div id="loginView" class="login-wrap hidden">
-  <div class="card login">
+  <div class="login-shell">
+  <div class="login-hero">
     <img src="icons/icon-192.png" alt="">
-    <h2 style="margin:10px 0 2px">نظام حضور الطلبة ببصمة الوجه</h2>
-    <p class="note" style="margin-top:0">جامعة السراج</p>
+    <h1>نظام الحضور والدرجات الذكي</h1>
+    <p>جامعة السراج — حضور ببصمة الوجه ورمز QR، وإدارة الدرجات والإنذارات والنتائج في مكان واحد.</p>
+    <div class="login-feats">
+      <div><span>🙂</span>تسجيل الحضور ببصمة الوجه أو QR خلال ثوانٍ</div>
+      <div><span>📶</span>يعمل حتى بدون إنترنت ويرفع البيانات لاحقاً</div>
+      <div><span>🎓</span>السعي والنهائي والنتائج والإشعارات للطلبة</div>
+    </div>
+  </div>
+  <div class="card login">
+    <h2>تسجيل الدخول 👋</h2>
+    <p class="note" style="margin-top:0">أدخل بريدك وكلمة المرور للمتابعة</p>
     <form id="loginForm" style="text-align:right">
       <label>البريد الإلكتروني</label><input id="lEmail" type="email" autocomplete="username" required dir="ltr">
       <label style="margin-top:8px">كلمة المرور</label><input id="lPass" type="password" autocomplete="current-password" required dir="ltr">
@@ -299,6 +447,7 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
     <p id="loginErr" style="color:var(--red);min-height:22px"></p>
     <a href="#" id="forgotLink" class="note">نسيت كلمة المرور؟</a>
     <p class="note" style="margin-top:12px">الطلبة: ادخلوا بالبريد وكلمة المرور المسلّمة لكم من القسم.</p>
+  </div>
   </div>
 </div>
 
@@ -551,13 +700,15 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
       <div><label>النوع</label><select id="cType"><option>نظري</option><option>عملي</option></select></div>
       <div><label>عدد الساعات</label><input id="cHours" type="number" min="1" max="6" value="2"></div>
       <div><label>التاريخ</label><input id="cDate" type="date"></div>
-      <div><label>طريقة تسجيل الحضور</label><select id="cMethod"><option value="face">بصمة الوجه (كاميرا التدريسي)</option><option value="qr">QR كود (هواتف الطلبة)</option><option value="both">بصمة الوجه + QR معاً</option><option value="phoneface">بصمة الوجه من هاتف الطالب (سيلفي)</option></select></div>
+      <div><label>طريقة تسجيل الحضور</label><select id="cMethod"><option value="face">بصمة الوجه (كاميرا التدريسي)</option><option value="qr">QR كود (هواتف الطلبة)</option><option value="both">بصمة الوجه + QR معاً</option><option value="phoneface">بصمة الوجه من هاتف الطالب (سيلفي)</option><option value="manual" hidden>✎ يدوي — محاضرة سابقة</option></select></div>
+      <div id="pastNote" class="banner hidden" style="grid-column:1/-1;margin:0"></div>
       <div class="qrOpt"><label>مدة التسجيل من هواتف الطلبة</label><select id="cQrMins"><option value="3">3 دقائق</option><option value="5">5 دقائق</option><option value="10" selected>10 دقائق</option><option value="15">15 دقيقة</option><option value="20">20 دقيقة</option><option value="30">30 دقيقة</option><option value="0">حتى إنهاء المحاضرة</option></select></div>
       <div class="qrOpt qrOnly"><label>يتغيّر رمز QR كل</label><select id="cQrSec"><option value="5" selected>5 ثوانٍ</option><option value="10">10 ثوانٍ</option><option value="15">15 ثانية</option><option value="30">30 ثانية</option></select></div>
       <div class="qrOpt qrOnly" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:0;padding-top:4px"><input type="checkbox" id="cQrFace" style="width:auto" checked> سيلفي قبل مسح QR: لا يُسجَّل الطالب إلا إذا طابق وجهه صورته في النظام (يمنع التسجيل بهاتف زميل)</label></div>
       <div class="qrOpt pfOnly" style="grid-column:1/-1"><label style="display:flex;gap:8px;align-items:center;color:#1c2733;margin:0;padding-top:4px"><input type="checkbox" id="cRoomCode" style="width:auto" checked> يكتب الطالب رمز القاعة الظاهر على شاشتي (يثبت وجوده داخل القاعة — موصى به)</label></div>
     </div>
     <button class="btn green" id="startSessionBtn" style="margin-top:12px">▶ بدء المحاضرة</button>
+    <p class="note" style="margin:8px 0 0">💡 لتسجيل حضور محاضرة فاتت (لم يُؤخذ حضورها في وقتها): غيّر <b>التاريخ</b> إلى يوم المحاضرة، أو اختر من «محاضرات لم يُسجَّل حضورها» في تبويب الجدول الأسبوعي. يكون التسجيل يدوياً ومن التدريسي فقط.</p>
   </div>
   <div id="sessionLive" class="hidden">
     <div class="card">
@@ -572,6 +723,12 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
     </div>
     <div class="cam-layout">
       <div>
+      <div class="card hidden" id="manualCard">
+        <h2>✎ تسجيل يدوي لمحاضرة سابقة</h2>
+        <p class="note" id="manualInfo"></p>
+        <p class="note">حدّد الحاضرين من القائمة. يمكنك البدء بـ «الكل حاضر» ثم تحويل الغائبين، أو العكس. بعد الانتهاء اضغط «إنهاء المحاضرة وحفظ الحضور».</p>
+        <div class="row"><button class="btn green" id="manAllP">✓ الكل حاضر</button><button class="btn light" id="manAllA">✗ الكل غائب</button></div>
+      </div>
       <div class="card" id="faceCard">
         <div class="cam"><video id="video" playsinline muted></video><canvas id="overlay"></canvas></div>
         <div id="prompt">قف أمام الكاميرا</div>
@@ -770,7 +927,7 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
   <div class="card">
     <div class="row" style="justify-content:space-between"><h2 style="margin:0">محاضرات لم يُسجَّل حضورها</h2><button class="btn light" id="msgMissing">↻ فحص</button></div>
     <p class="note">من بداية الفصل حتى أمس، حسب الجدول الأسبوعي.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>اليوم</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>التدريسي</th></tr></thead><tbody id="missBody"></tbody></table></div>
+    <div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>اليوم</th><th>المادة</th><th>المرحلة / الدراسة / الشعبة</th><th>التدريسي</th><th></th></tr></thead><tbody id="missBody"></tbody></table></div>
   </div>
 </section>
 
@@ -802,6 +959,25 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
 
 <!-- المستخدمون -->
 <section id="tUsers" class="tab">
+  <div class="card hidden" id="authAdmCard">
+    <h2>🔐 حسابات الدخول في Firebase Authentication — مدير النظام</h2>
+    <p class="note" style="line-height:1.8">لعرض كل حسابات الدخول (البريد) وحذفها نهائياً: الكل أو المحدد. يحتاج <b>ملف مفتاح الخدمة (Service account JSON)</b>:
+      Firebase ← ⚙ Project settings ← Service accounts ← <b>Generate new private key</b>. يُحمَّل الملف هنا في كل مرة، ويبقى في ذاكرة هذه الصفحة فقط، ولا يُحفظ ولا يُرسَل إلى أي مكان غير Google.
+      ⚠ استخدمه على جهازك الشخصي فقط، واحفظ الملف في مكان آمن.</p>
+    <div class="row">
+      <label class="btn light" style="margin:0;cursor:pointer">📂 تحميل ملف المفتاح (JSON)<input type="file" id="aaKeyFile" accept=".json,application/json" hidden></label>
+      <button class="btn" id="aaLoad" disabled>↻ تحميل قائمة الحسابات</button>
+      <button class="btn light sm hidden" id="aaForget">إزالة المفتاح من الذاكرة</button>
+    </div>
+    <div class="note" id="aaKeyState" style="margin-top:6px"></div><div class="note" id="aaState" style="margin-top:4px"></div>
+    <div id="aaBar" class="hidden" style="margin-top:10px">
+      <div class="seg" id="aaSeg"></div>
+      <div class="sel-bar"><input id="aaSearch" placeholder="بحث بالبريد أو الاسم" style="width:220px"><button class="btn sm light" id="aaAll">☑ تحديد الكل الظاهر</button><button class="btn sm light" id="aaNone">إلغاء التحديد</button>
+        <span class="note" id="aaSelInfo"></span><button class="btn sm red" id="aaDel" disabled>🗑 حذف المحدد من Authentication</button></div>
+      <div id="aaList"></div>
+      <p class="note">«غير مرتبطة»: حسابات بريد لا يقابلها طالب ولا مستخدم في النظام (مثل حسابات طلبة حُذفوا سابقاً)، وحذفها آمن تماماً. حسابك الحالي لا يمكن تحديده.</p>
+    </div>
+  </div>
   <div class="card">
     <div class="row" style="justify-content:space-between;margin-bottom:10px">
       <h2 style="margin:0">المستخدمون</h2>
@@ -978,6 +1154,6 @@ body:has(#studentView:not(.hidden)) #toasts{bottom:86px;left:50%;transform:trans
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=5.3.1"></script>
+<script src="app.js?v=6.1.0"></script>
 </body>
 </html>

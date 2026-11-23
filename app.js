@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '5.3.1';
+const APP_VERSION = '6.1.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -227,7 +227,7 @@ function applyRole(){
   const cur = $$('nav button').find(b => b.classList.contains('active') && !b.classList.contains('hidden'));
   showTab(cur ? cur.dataset.tab : first);
   $('#userBox').textContent = App.user.name || App.user.email || ''; $('#roleBox').textContent = ROLES[r];
-  $('#sbAv').textContent = (App.user.name || App.user.email || '?').replace(/^(د\.|م\.د|م\.|أ\.د|أ\.)\s*/, '').trim().charAt(0) || '?';
+  $('#sbAv').textContent = (App.user.name || App.user.email || '?').replace(/^(أ\.م\.د\.?|أ\.د\.?|م\.م\.?|م\.د\.?|د\.|م\.|أ\.)\s*/, '').trim().charAt(0) || '?';
   $('#sbVer').textContent = 'الإصدار ' + APP_VERSION;
   $('#policyCard').classList.toggle('hidden', !is('super','dean','head','committee','qa'));
   $$('#policyCard input, #pSave').forEach(x => x.disabled = !is('super','dean','head'));
@@ -1047,13 +1047,21 @@ function renderCourseList(){
 $('#startSessionBtn').onclick = async () => {
   const d = App.dept;
   if (!d) return toast('اختر القسم أولاً', 'err');
-  const method = $('#cMethod').value, useFace = method === 'face' || method === 'both', useQR = method !== 'face';
+  const dt = $('#cDate').value || today(), past = dt < today();
+  if (dt > today()) return toast('لا يمكن تسجيل حضور لتاريخ لم يأتِ بعد', 'err');
+  if (past && !is('instructor')) return toast('تسجيل حضور المحاضرات السابقة يكون من التدريسي فقط', 'err');
+  const method = past ? 'manual' : $('#cMethod').value, useFace = method === 'face' || method === 'both', useQR = method !== 'face' && method !== 'manual';
   if (useFace && !modelsReady) return toast('انتظر حتى تكتمل نماذج الوجه، أو اختر طريقة QR', 'err');
   const meta = {collegeId:d.collegeId, deptId:d.id, deptName:d.name, term:App.org.term,
     course:$('#cName').value.trim(), stage:$('#cStage').value, shift:$('#cShift').value, section:$('#cSection').value,
     type:$('#cType').value, hours:+$('#cHours').value || 1, date:$('#cDate').value || today(),
     instructorUid:App.user.uid, instructorName:App.user.name || App.user.email || ''};
   if (!meta.course) return toast('أدخل اسم المادة', 'err');
+  if (past){
+    meta.manualPast = true; meta.enteredAt = nowISO();
+    const dup = App.sessions.find(x => x.date === meta.date && x.course === meta.course && x.stage === meta.stage && x.shift === meta.shift && (x.section || '') === (meta.section || ''));
+    if (dup && !(await confirmBox('محاضرة مسجّلة مسبقاً', `يوجد حضور محفوظ لهذه المادة بتاريخ ${meta.date}. هل تريد تسجيل محاضرة أخرى في اليوم نفسه؟`, 'متابعة'))) return;
+  }
   $('#startSessionBtn').disabled = true;
   let pack = null;
   try{ pack = await DB.get('att_packs', packId(d.id, meta.stage, meta.shift)); }
@@ -1078,6 +1086,8 @@ $('#startSessionBtn').onclick = async () => {
   $('#rosterSearch').value = ''; renderRoster();
   $('#faceCard').classList.toggle('hidden', !useFace); $('#qrCard').classList.toggle('hidden', !useQR);
   $('#pauseBtn').classList.toggle('hidden', !useFace);
+  $('#manualCard').classList.toggle('hidden', method !== 'manual');
+  if (method === 'manual') $('#manualInfo').innerHTML = `محاضرة يوم <b>${esc(DAYS[new Date(meta.date + 'T12:00').getDay()] || '')} ${esc(meta.date)}</b> — ${roster.length} طالب. سيُحفظ أن الحضور أُدخل يدوياً لاحقاً بتاريخ اليوم.`;
   $('#rejBox').classList.add('hidden'); $('#rejBody').innerHTML = '';
   if (useQR) startQR();
   if (useFace){ if (matcher) await resumeCamera(); else showPrompt('لا توجد بصمات — التسجيل يدوي', 'warn'); }
@@ -1367,6 +1377,33 @@ function renderRoster(){
   }).join('');
   $('#stPresent').textContent = present; $('#stTotal').textContent = sess.roster.size; $('#stAbsent').textContent = sess.roster.size - present;
 }
+$('#manAllP').onclick = () => { if (!sess) return; const t = hhmm(); sess.roster.forEach(st => { if (st.status === 'absent'){ st.status = 'manual'; st.time = t; } }); renderRoster(); };
+$('#manAllA').onclick = () => { if (!sess) return; sess.roster.forEach(st => { st.status = 'absent'; st.time = ''; st.dist = null; }); renderRoster(); };
+// التاريخ: المحاضرات السابقة تُسجَّل يدوياً فقط ومن التدريسي فقط
+let methodBeforePast = null;
+function pastUI(){
+  const dt = $('#cDate').value, past = !!dt && dt < today(), fut = !!dt && dt > today(), sel = $('#cMethod'), mo = sel.querySelector('option[value="manual"]');
+  if (past){ if (sel.value !== 'manual') methodBeforePast = sel.value; mo.hidden = false; sel.value = 'manual'; sel.disabled = true; }
+  else { mo.hidden = true; if (sel.value === 'manual') sel.value = methodBeforePast || 'face'; sel.disabled = false; }
+  qrOptUI(); if (past) $$('.qrOpt').forEach(e => e.classList.add('hidden'));
+  const n = $('#pastNote'); n.classList.toggle('hidden', !past && !fut);
+  n.innerHTML = fut ? '⚠ لا يمكن تسجيل الحضور لتاريخ لم يأتِ بعد.' : !is('instructor') ? '⛔ تسجيل حضور المحاضرات السابقة يكون من <b>التدريسي فقط</b>.' : `✎ <b>محاضرة سابقة (${esc(dt)})</b>: يُسجَّل الحضور يدوياً فقط — تحدّد الحاضرين والغائبين من القائمة.`;
+  $('#startSessionBtn').textContent = past ? '✎ فتح قائمة الطلبة للتسجيل اليدوي' : '▶ بدء المحاضرة';
+  $('#startSessionBtn').disabled = fut || (past && !is('instructor'));
+}
+$('#cDate').addEventListener('change', pastUI); $('#cDate').addEventListener('input', pastUI);
+$('#missBody').onclick = e => {
+  const b = e.target.closest('button[data-miss]'); if (!b) return;
+  const o = JSON.parse(b.dataset.miss);
+  showTab('tSession');
+  if (!$('#cAsgBox').classList.contains('hidden')){
+    const i = myAsg().findIndex(a => a.course === o.course && a.stage === o.stage && a.shift === o.shift && (a.section || '') === (o.section || ''));
+    if (i < 0) return toast('هذه المادة غير مسندة إليك في حسابك — راجع رئيس القسم', 'err');
+    $('#cAsg').value = i; applyAsg();
+  } else { $('#cName').value = o.course; $('#cStage').value = o.stage; $('#cShift').value = o.shift; $('#cSection').value = o.section || ''; }
+  $('#cType').value = o.type || 'نظري'; $('#cHours').value = o.hours || 2; $('#cDate').value = o.date; pastUI();
+  $('#sessionSetup').scrollIntoView({behavior:'smooth'}); toast('تم ملء بيانات المحاضرة — اضغط «فتح قائمة الطلبة»', 'ok');
+};
 $('#rosterBody').onclick = e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.man) markPresent(b.dataset.man, 'manual');
@@ -1396,7 +1433,7 @@ $('#finishBtn').onclick = async () => {
       acceptUntil:new Date(Date.now() + QR_ACCEPT_DAYS * 86400000).toISOString(), qrLate:0});
   }
   const w = DB.set('att_sessions', null, rec);
-  audit('حفظ حضور محاضرة', `${rec.course} — ${rec.stage} / ${rec.shift}${rec.section ? ' / ' + rec.section : ''} — ${rec.date} — حاضر ${rec.present.length}، غائب ${rec.absentees.length}، يدوي ${rec.present.filter(x => x.method === 'manual').length}`, rec.deptId);
+  audit(rec.manualPast ? 'تسجيل يدوي لمحاضرة سابقة' : 'حفظ حضور محاضرة', `${rec.course} — ${rec.stage} / ${rec.shift}${rec.section ? ' / ' + rec.section : ''} — ${rec.date} — حاضر ${rec.present.length}، غائب ${rec.absentees.length}، يدوي ${rec.present.filter(x => x.method === 'manual').length}`, rec.deptId);
   if (App.mode === 'local') toast('تم حفظ حضور المحاضرة', 'ok');
   else {
     bg(w.p, 'تم رفع حضور المحاضرة إلى الخادم ✓');
@@ -1418,7 +1455,7 @@ function renderRecords(){
   const canDel = is('super','dean','head');
   $('#sessionsBody').innerHTML = list.map(s => `<tr><td>${esc(s.date)}</td><td>${esc(s.deptName || deptName(s.deptId))}</td><td>${esc(s.course)}</td>
     <td>${esc(s.stage)} / ${esc(s.shift)} / ${esc(s.section || 'الكل')}</td><td>${esc(s.type)}</td><td>${s.hours}</td><td>${esc(s.instructorName || '')}</td>
-    <td>${(s.present || []).length}${s.qrLate ? ` <span class="badge b-qr" title="أُضيفوا لاحقاً من هواتف كانت دون اتصال">+${s.qrLate} QR</span>` : ''}</td><td>${(s.absentees || []).length}</td>
+    <td>${(s.present || []).length}${s.qrLate ? ` <span class="badge b-qr" title="أُضيفوا لاحقاً من هواتف كانت دون اتصال">+${s.qrLate} QR</span>` : ''}${s.manualPast ? ` <span class="badge b-man" title="أُدخل يدوياً بتاريخ ${esc((s.enteredAt || '').slice(0, 10))}">✎ يدوي لاحق</span>` : ''}</td><td>${(s.absentees || []).length}</td>
     <td>${App.mode === 'local' ? '<span class="badge b-gray">محلي</span>' : s._pending ? '<span class="badge b-man">بانتظار الرفع</span>' : '<span class="badge b-face">مرفوع ✓</span>'}</td>
     <td class="row"><button class="btn sm light" data-csv="${esc(s.id)}">CSV</button>${canDel ? `<button class="btn sm red" data-sdel="${esc(s.id)}">حذف</button>` : ''}</td></tr>`).join('')
     || '<tr><td colspan="11" class="note">لا توجد محاضرات محفوظة في هذا الفصل</td></tr>';
@@ -2133,7 +2170,7 @@ $('#todayList').onclick = e => {
     if (i < 0) return toast('هذه المحاضرة غير مسندة إليك في حسابك — راجع رئيس القسم', 'err');
     $('#cAsg').value = i; applyAsg();
   } else { $('#cName').value = s.course; $('#cStage').value = s.stage; $('#cShift').value = s.shift; $('#cSection').value = s.section || ''; }
-  $('#cType').value = s.type || 'نظري'; $('#cHours').value = s.hours || 2; $('#cDate').value = today();
+  $('#cType').value = s.type || 'نظري'; $('#cHours').value = s.hours || 2; $('#cDate').value = today(); pastUI();
   toast('تم ملء بيانات المحاضرة — اختر طريقة التسجيل واضغط بدء', 'ok');
 };
 // المحاضرات المجدولة التي لم يُسجَّل حضورها
@@ -2148,12 +2185,13 @@ function scheduledOccurrences(slots, sessions, from, to){
 }
 function renderMissing(){
   const start = App.org && App.org.termStart;
-  if (!start){ $('#missBody').innerHTML = '<tr><td colspan="5" class="note">حدّد "بداية الفصل" من تبويب الهيكل التنظيمي (مدير النظام)</td></tr>'; return; }
+  if (!start){ $('#missBody').innerHTML = '<tr><td colspan="6" class="note">حدّد "بداية الفصل" من تبويب الهيكل التنظيمي (مدير النظام)</td></tr>'; return; }
   const y = new Date(); y.setDate(y.getDate() - 1);
   const occ = scheduledOccurrences(slotList().map(s => Object.assign({deptId:App.dept.id}, s)), App.sessions, start, ymd(y)).filter(o => !o.done && (!is('instructor') || o.instr === App.user.uid))
     .sort((a, b) => b.date.localeCompare(a.date));
-  $('#missBody').innerHTML = occ.slice(0, 400).map(o => `<tr><td>${o.date}</td><td>${DAYS[o.day]}</td><td>${esc(o.course)}</td><td>${esc(o.stage)} / ${esc(o.shift)} / ${esc(o.section || 'الكل')}</td><td>${esc(o.instrName || '')}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="note">✓ كل المحاضرات المجدولة سُجّل حضورها</td></tr>';
+  $('#missBody').innerHTML = occ.slice(0, 400).map(o => `<tr><td>${o.date}</td><td>${DAYS[o.day]}</td><td>${esc(o.course)}</td><td>${esc(o.stage)} / ${esc(o.shift)} / ${esc(o.section || 'الكل')}</td><td>${esc(o.instrName || '')}</td>
+    <td>${is('instructor') && o.instr === App.user.uid ? `<button class="btn sm" data-miss="${esc(JSON.stringify({date:o.date, course:o.course, stage:o.stage, shift:o.shift, section:o.section || '', type:o.type, hours:o.hours}))}">✎ تسجيل الحضور يدوياً</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="note">✓ كل المحاضرات المجدولة سُجّل حضورها</td></tr>';
 }
 $('#msgMissing').onclick = renderMissing;
 
@@ -3184,6 +3222,7 @@ async function renderHome(force){
   } else k = [kp('✓', 'g', termP == null ? '—' : termP + '%', 'نسبة الحضور في الفصل', 'tRecords'), kp('🗓', 'b', sess.length, 'محاضرة مسجّلة', 'tRecords'),
     kp('⚠', 'w', warnSids.size, 'طالب لديه إنذار أو حرمان', 'tRecords'), kp('⛔', 'r', new Set(depRows.map(r => r.sid)).size, 'طالب محروم', 'tRecords')];
   $('#hKpis').innerHTML = k.join('');
+  animateNums($('#hKpis'));
   // الحضور في آخر الأيام
   const dates = [...new Set(sess.map(s => s.date))].sort().slice(-7);
   $('#hWeek').innerHTML = dates.length ? dates.map(dt => { const p = attPct(sess.filter(s => s.date === dt)) || 0, w = new Date(dt + 'T12:00').toLocaleDateString('ar-IQ', {weekday:'long'});
@@ -3222,6 +3261,12 @@ async function renderHome(force){
   $('#hToday').innerHTML = todayS.slice(0, 6).map(s => { const p = attPct([s]) || 0, n = (s.present || []).length, t = n + (s.absentees || []).length;
     return `<div class="li" data-go="tRecords"><div class="t"><b>${esc(s.course)}</b><small>${esc(s.stage)} / ${esc(s.shift)}${s.section ? ' / ' + esc(s.section) : ''} · ${esc(s.instructorName || '')}</small><div class="pbar"><i style="width:${p}%;background:${p < 80 ? 'var(--amber)' : 'var(--green)'}"></i></div></div><span class="badge ${p < 80 ? 'b-man' : 'b-face'}">${n}/${t} حاضر</span></div>`; }).join('')
     || '<div class="empty">لم تُسجَّل محاضرات اليوم بعد</div>';
+}
+function animateNums(el){
+  if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  el.querySelectorAll('.kp b').forEach(b => { const m = b.textContent.match(/^(\d+)(%?)$/); if (!m || +m[1] < 2) return; const to = +m[1]; let t0 = 0;
+    const step = ts => { t0 = t0 || ts; const p = Math.min(1, (ts - t0) / 700); b.textContent = Math.round(to * (1 - Math.pow(1 - p, 3))) + m[2]; if (p < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step); });
 }
 function updateBadges(R){
   setNavBadge('tExcuses', is('super','dean','head') ? R.ex.length : 0);
@@ -3341,6 +3386,7 @@ document.addEventListener('visibilitychange', () => { if (student && document.vi
     if (!App.user) return;
     if (id === 'tHome') renderHome(false);
     if (id === 'tAnn') renderAnnTab(true);
+    if (id === 'tUsers') renderAuthCard();
   };
   const _applyRole = applyRole;
   applyRole = function(){
@@ -3362,6 +3408,132 @@ document.addEventListener('visibilitychange', () => { if (student && document.vi
   const _enterStudent = enterStudent;
   enterStudent = async function(st){ await _enterStudent(st); if (student === st) initStudentV5(); };
 }
+
+/* =====================================================================
+   حسابات الدخول (Firebase Authentication) — مدير النظام فقط
+   يستخدم ملف مفتاح الخدمة (JSON) يحمّله المدير على جهازه في كل مرة؛ لا يُحفظ ولا يُرفع إلى أي مكان.
+   ===================================================================== */
+let AA = {key:null, tok:null, tokAt:0, users:[], sel:new Set(), filter:'orphan', q:''};
+const b64url = s => btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const b64urlBytes = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return b64url(s); };
+async function signJwt(claims){
+  const pem = String(AA.key.private_key).replace(/\\n/g, '\n').replace(/-----[^-]+-----/g, '').replace(/[^A-Za-z0-9+/=]/g, '');
+  const der = Uint8Array.from(atob(pem), c => c.charCodeAt(0));
+  const k = await crypto.subtle.importKey('pkcs8', der.buffer, {name:'RSASSA-PKCS1-v1_5', hash:'SHA-256'}, false, ['sign']);
+  const enc = o => b64urlBytes(new TextEncoder().encode(JSON.stringify(o)));
+  const unsigned = enc({alg:'RS256', typ:'JWT', kid:AA.key.private_key_id}) + '.' + enc(claims);
+  const sig = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', k, new TextEncoder().encode(unsigned)));
+  return unsigned + '.' + b64urlBytes(sig);
+}
+// رمز الوصول: أولاً JWT موقّع ذاتياً (لا يحتاج خادماً)، وإن رُفض فرمز OAuth
+async function aaToken(mode){
+  const now = Math.floor(Date.now() / 1000);
+  if (mode === 'self') return signJwt({iss:AA.key.client_email, sub:AA.key.client_email, aud:'https://identitytoolkit.googleapis.com/', iat:now, exp:now + 3600});
+  if (AA.tok && Date.now() - AA.tokAt < 50 * 60000) return AA.tok;
+  const a = await signJwt({iss:AA.key.client_email, scope:'https://www.googleapis.com/auth/identitytoolkit https://www.googleapis.com/auth/cloud-platform', aud:'https://oauth2.googleapis.com/token', iat:now, exp:now + 3600});
+  const r = await fetch('https://oauth2.googleapis.com/token', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=' + a});
+  const j = await r.json(); if (!j.access_token) throw new Error((j.error_description || j.error || 'token').toString());
+  AA.tok = j.access_token; AA.tokAt = Date.now(); return AA.tok;
+}
+let aaMode = 'self';
+async function aaFetch(path, opt = {}){
+  const url = `https://identitytoolkit.googleapis.com/v1/projects/${AA.key.project_id}/${path}`;
+  for (const mode of aaMode === 'self' ? ['self', 'oauth'] : ['oauth']){
+    let r;
+    try{ r = await fetch(url, Object.assign({}, opt, {headers:Object.assign({'Content-Type':'application/json', Authorization:'Bearer ' + await aaToken(mode)}, opt.headers || {})})); }
+    catch(e){ if (mode === 'oauth') throw new Error('تعذّر الاتصال بخدمة Google — تحقق من الإنترنت'); continue; }
+    if (r.status === 401 && mode === 'self'){ aaMode = 'oauth'; continue; }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    return j;
+  }
+}
+function renderAuthCard(){
+  $('#authAdmCard').classList.toggle('hidden', !is('super') || App.mode === 'local');
+  if (!is('super')) return;
+  $('#aaKeyState').innerHTML = AA.key ? `✓ المفتاح محمّل: <span dir="ltr">${esc(AA.key.client_email)}</span> — يبقى في ذاكرة هذه الصفحة فقط` : 'لم يُحمَّل ملف المفتاح بعد';
+  $('#aaLoad').disabled = !AA.key; $('#aaForget').classList.toggle('hidden', !AA.key);
+  renderAuthList();
+}
+$('#aaKeyFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  try{
+    const k = JSON.parse(await f.text());
+    if (k.type !== 'service_account' || !k.private_key || !k.client_email) throw new Error('هذا ليس ملف مفتاح خدمة (Service account)');
+    const pid = (window.FIREBASE_CONFIG || {}).projectId;
+    if (pid && k.project_id !== pid) throw new Error(`الملف لمشروع آخر (${k.project_id}) — مشروع النظام: ${pid}`);
+    AA.key = k; AA.tok = null; aaMode = 'self'; toast('✓ حُمّل المفتاح — اضغط «تحميل قائمة الحسابات»', 'ok');
+  }catch(err){ toast('ملف غير صالح: ' + err.message, 'err'); }
+  renderAuthCard();
+};
+$('#aaForget').onclick = () => { AA = {key:null, tok:null, tokAt:0, users:[], sel:new Set(), filter:AA.filter, q:''}; renderAuthCard(); toast('أُزيل المفتاح من الذاكرة', 'ok'); };
+$('#aaLoad').onclick = async () => {
+  $('#aaLoad').disabled = true; $('#aaState').textContent = '⏳ جارٍ تحميل الحسابات...';
+  try{
+    const users = []; let next = '';
+    do{ const j = await aaFetch(`accounts:batchGet?maxResults=1000${next ? '&nextPageToken=' + encodeURIComponent(next) : ''}`, {method:'GET'}); (j.users || []).forEach(u => users.push(u)); next = j.nextPageToken || ''; } while (next && users.length < 20000);
+    const [staff, studs] = await Promise.all([DB.query('att_users', []).catch(() => []), DB.query('att_stu', []).catch(() => [])]);
+    const sMap = Object.fromEntries(staff.map(x => [x.id, x])), stMap = Object.fromEntries(studs.map(x => [x.id, x]));
+    AA.users = users.map(u => { const st = sMap[u.localId], sd = stMap[u.localId];
+      return {uid:u.localId, email:u.email || '(بلا بريد)', created:+u.createdAt || 0, last:+u.lastLoginAt || 0, kind:u.localId === App.user.uid ? 'me' : st ? 'staff' : sd ? 'student' : 'orphan',
+        label:st ? `${st.name || ''} — ${ROLES[st.role === 'admin' ? 'super' : st.role] || st.role}` : sd ? `${sd.name || ''} — ${sd.sid} — ${deptName(sd.deptId)}` : 'غير مرتبط بأي طالب أو مستخدم', stu:sd || null, staff:st || null}; })
+      .sort((a, b) => b.created - a.created);
+    AA.sel.clear(); $('#aaState').textContent = `✓ ${AA.users.length} حساب`;
+  }catch(e){ console.error(e); $('#aaState').innerHTML = `✗ ${esc(e.message)}<br><span class="note">تأكد أن الملف هو مفتاح Service account لهذا المشروع، وأن الإنترنت متصل.</span>`; }
+  $('#aaLoad').disabled = false; renderAuthList();
+};
+const AA_KIND = {orphan:['يتيم', 'b-abs'], student:['طالب', 'b-qr'], staff:['كادر', 'b-vio'], me:['حسابك', 'b-face']};
+function aaVisible(){
+  const q = AA.q.toLowerCase();
+  return AA.users.filter(u => (AA.filter === 'all' || u.kind === AA.filter) && (!q || u.email.toLowerCase().includes(q) || u.label.toLowerCase().includes(q)));
+}
+function renderAuthList(){
+  const box = $('#aaList'); if (!AA.users.length){ box.innerHTML = ''; $('#aaBar').classList.add('hidden'); return; }
+  $('#aaBar').classList.remove('hidden');
+  const cnt = k => AA.users.filter(u => u.kind === k).length;
+  $('#aaSeg').innerHTML = [['orphan', `غير مرتبطة ${cnt('orphan')}`], ['student', `طلبة ${cnt('student')}`], ['staff', `كادر ${cnt('staff')}`], ['all', `الكل ${AA.users.length}`]]
+    .map(([k, t]) => `<button data-aaf="${k}" class="${AA.filter === k ? 'on' : ''}">${t}</button>`).join('');
+  const list = aaVisible();
+  box.innerHTML = `<div class="tbl-wrap" style="max-height:460px"><table><thead><tr><th style="width:34px"></th><th>البريد</th><th>مرتبط بـ</th><th>النوع</th><th>أُنشئ</th><th>آخر دخول</th></tr></thead><tbody>${
+    list.slice(0, 1500).map(u => `<tr><td>${u.kind === 'me' ? '' : `<input type="checkbox" data-aa="${esc(u.uid)}" ${AA.sel.has(u.uid) ? 'checked' : ''} style="width:auto">`}</td>
+      <td dir="ltr" style="text-align:right">${esc(u.email)}</td><td>${esc(u.label)}</td><td><span class="badge ${AA_KIND[u.kind][1]}">${AA_KIND[u.kind][0]}</span></td>
+      <td>${u.created ? new Date(u.created).toLocaleDateString('en-GB') : '—'}</td><td>${u.last ? new Date(u.last).toLocaleDateString('en-GB') : 'لم يدخل'}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">لا توجد حسابات في هذا التصنيف</td></tr>'}</tbody></table></div>`;
+  $('#aaSelInfo').textContent = AA.sel.size ? `محدّد: ${AA.sel.size}` : 'لم يُحدَّد شيء';
+  $('#aaDel').disabled = !AA.sel.size;
+}
+$('#aaSeg').onclick = e => { const b = e.target.closest('[data-aaf]'); if (b){ AA.filter = b.dataset.aaf; renderAuthList(); } };
+$('#aaSearch').oninput = e => { AA.q = e.target.value.trim(); renderAuthList(); };
+$('#aaList').onchange = e => { const c = e.target.closest('[data-aa]'); if (!c) return; c.checked ? AA.sel.add(c.dataset.aa) : AA.sel.delete(c.dataset.aa); renderAuthList(); };
+$('#aaAll').onclick = () => { aaVisible().forEach(u => { if (u.kind !== 'me') AA.sel.add(u.uid); }); renderAuthList(); };
+$('#aaNone').onclick = () => { AA.sel.clear(); renderAuthList(); };
+$('#aaDel').onclick = async () => {
+  const list = AA.users.filter(u => AA.sel.has(u.uid) && u.kind !== 'me'); if (!list.length) return;
+  const nS = list.filter(u => u.kind === 'student').length, nK = list.filter(u => u.kind === 'staff').length;
+  const extra = (nS ? `\n• ${nS} حساب طالب: يُحذف حسابه وسجل حسابه (att_stu) ويُفك ربطه من قائمة القسم، فيبقى اسمه في القائمة بلا حساب.` : '') + (nK ? `\n• ${nK} حساب كادر: يُحذف المستخدم من النظام نهائياً.` : '');
+  const word = prompt(`سيُحذف ${list.length} حساب من Firebase Authentication نهائياً (لا يمكن التراجع).${extra}\n\nللتأكيد اكتب: حذف`);
+  if ((word || '').trim() !== 'حذف') return toast('أُلغي الحذف', 'err');
+  $('#aaDel').disabled = true; let done = 0, fail = 0;
+  try{
+    for (let i = 0; i < list.length; i += 500){
+      const part = list.slice(i, i + 500);
+      $('#aaState').textContent = `⏳ جارٍ الحذف ${i + part.length} / ${list.length}...`;
+      const j = await aaFetch('accounts:batchDelete', {method:'POST', body:JSON.stringify({localIds:part.map(u => u.uid), force:true})});
+      const bad = new Set((j.errors || []).map(x => part[x.index] && part[x.index].uid)); fail += bad.size;
+      for (const u of part.filter(u => !bad.has(u.uid))){
+        done++;
+        if (u.kind === 'student' && u.stu){ const sd = u.stu;
+          bg(DB.del('att_stu', u.uid).p); bg(DB.del('att_cred', u.uid).p); if (sd.boundDevice) bg(DB.del('att_devices', sd.boundDevice).p);
+          if (sd.deptId && sd.stage && sd.shift && sd.sid) bg(DB.update('att_packs', packId(sd.deptId, sd.stage, sd.shift), {[`students.${sd.sid}.u`]:DEL, updatedAt:nowISO()}).p); }
+        if (u.kind === 'staff') bg(DB.del('att_users', u.uid).p);
+        if (u.kind === 'orphan') bg(DB.del('att_cred', u.uid).p);
+      }
+    }
+    audit('حذف حسابات من Authentication', `${done} حساب: ` + list.slice(0, 60).map(u => u.email).join('، '));
+    toast(`✓ حُذف ${done} حساب${fail ? ` — تعذّر ${fail}` : ''}`, fail ? 'err' : 'ok');
+  }catch(e){ console.error(e); toast('تعذّر الحذف: ' + e.message, 'err'); }
+  AA.users = AA.users.filter(u => !(AA.sel.has(u.uid) && done)); AA.sel.clear(); $('#aaLoad').click();
+};
 
 /* ============ تسجيل الدخول والتشغيل ============ */
 $('#loginForm').onsubmit = async e => {
