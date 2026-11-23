@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>نظام حضور الطلبة — جامعة السراج</title>
 <meta name="theme-color" content="#0b2038">
-<meta name="app-version" content="6.2.1">
+<meta name="app-version" content="6.3.0">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/svg+xml" href="icons/icon.svg">
 <link rel="icon" type="image/png" sizes="64x64" href="icons/favicon-64.png">
@@ -429,6 +429,33 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
 /* الجوال: جدول ونموذج */
 @media(max-width:900px){.home-top{border-radius:20px;padding:18px}.home-top h2{font-size:20px}}
 </style>
+<style id="v63css">
+/* ===== الإصدار 6.3: لمسات تصميم إضافية ===== */
+body{background-image:radial-gradient(1200px 620px at 100% -10%,rgba(124,58,237,.09),transparent 60%),radial-gradient(900px 520px at -10% 10%,rgba(37,99,235,.08),transparent 60%),radial-gradient(rgba(30,58,138,.045) 1px,transparent 1px);background-size:auto,auto,22px 22px}
+.card>h2:first-child,.card>.row:first-child>h2{position:relative;padding-right:14px}
+.card>h2:first-child::before,.card>.row:first-child>h2::before{content:"";position:absolute;right:0;top:.2em;bottom:.2em;width:4px;border-radius:4px;background:linear-gradient(180deg,#2563eb,#7c3aed)}
+.card{backdrop-filter:blur(2px)}
+.stat{background:linear-gradient(135deg,#f5f8ff,#f8f5ff)!important;border:1px solid #e6e9fb!important;border-radius:16px!important}
+.stat b{background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent!important;font-size:30px}
+#sidebar nav button{position:relative}
+#sidebar nav button.active::after{content:"";position:absolute;left:8px;top:50%;width:6px;height:6px;margin-top:-3px;border-radius:50%;background:#fff;box-shadow:0 0 10px #fff}
+.sb-ver{opacity:.65!important;line-height:1.7}.sb-ver .dev{display:block;color:#c4b5fd;opacity:1;font-weight:600}
+.topbar .term.clickable{cursor:pointer;transition:transform .15s,box-shadow .15s}.topbar .term.clickable:hover{transform:translateY(-1px);box-shadow:0 6px 14px -6px rgba(5,150,105,.5)}
+th{background:linear-gradient(180deg,#f9faff,#f3f5fc)}
+.chip{border-radius:16px!important;border:1px solid #e3e7f5!important;background:linear-gradient(180deg,#fff,#f7f9ff)!important;box-shadow:0 1px 2px rgba(16,24,40,.05);transition:transform .15s,box-shadow .15s,border-color .15s}
+.chip:hover{transform:translateY(-2px);border-color:#c9d6f5!important;box-shadow:0 10px 20px -12px rgba(37,99,235,.45)}
+.home-top{background:linear-gradient(120deg,#1e3a8a,#4f46e5,#7c3aed,#4f46e5);background-size:240% 240%;animation:heroShift 14s ease infinite}
+.st-head{background:linear-gradient(120deg,#1e3a8a,#4f46e5,#7c3aed,#4f46e5)!important;background-size:240% 240%!important;animation:heroShift 14s ease infinite}
+@keyframes heroShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+.login-wrap::before{animation:floatA 12s ease-in-out infinite}.login-wrap::after{animation:floatB 14s ease-in-out infinite}
+@keyframes floatA{50%{transform:translate(-40px,30px) scale(1.05)}}@keyframes floatB{50%{transform:translate(40px,-30px) scale(1.08)}}
+.dev-credit{margin:14px 0 0;text-align:center;font-size:12.5px;font-weight:600;background:linear-gradient(135deg,#2563eb,#7c3aed);-webkit-background-clip:text;background-clip:text;color:transparent}
+.lq-box{display:inline-block;padding:14px;border-radius:24px;background:linear-gradient(135deg,#2563eb,#7c3aed);box-shadow:0 20px 40px -18px rgba(79,70,229,.7);margin-top:6px}
+.lq-box canvas{display:block;border-radius:14px;background:#fff;width:260px;height:260px}
+.banner{backdrop-filter:blur(4px)}
+.empty{padding:22px 8px}
+#stVer{font-weight:600}
+</style>
 </head>
 <body>
 
@@ -456,6 +483,7 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
     <p id="loginErr" style="color:var(--red);min-height:22px"></p>
     <a href="#" id="forgotLink" class="note">نسيت كلمة المرور؟</a>
     <p class="note" style="margin-top:12px">الطلبة: ادخلوا بالبريد وكلمة المرور المسلّمة لكم من القسم.</p>
+    <p class="dev-credit">تطوير: د. محمد يوسف</p>
   </div>
   </div>
 </div>
@@ -678,6 +706,7 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
     <div class="row" style="margin-bottom:10px">
       <button class="btn green sm" id="importBtn">📥 استيراد الطلبة من Excel وإنشاء حساباتهم</button>
       <button class="btn light sm" id="templateBtn">⬇ تنزيل قالب Excel</button>
+      <button class="btn light sm" data-loginqr="1">📲 باركود دخول الطلبة</button>
       <button class="btn light sm" id="exportStudentsBtn">📤 تصدير قائمة الطلبة (Excel)</button>
       <button class="btn light sm" id="syncPrintsBtn" title="ينسخ بصمة وجه كل طالب إلى حسابه ليتحقق الهاتف من وجهه عند مسح QR">↻ مزامنة بصمات الوجه مع حسابات الطلبة</button>
     </div>
@@ -929,9 +958,9 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
       <div><label>اليوم</label><select id="scDay"><option value="6">السبت</option><option value="0">الأحد</option><option value="1">الاثنين</option><option value="2">الثلاثاء</option><option value="3">الأربعاء</option><option value="4">الخميس</option><option value="5">الجمعة</option></select></div>
       <div><label>من</label><input id="scFrom" type="time" value="08:30"></div>
       <div><label>إلى</label><input id="scTo" type="time" value="10:30"></div>
-      <div><label>المادة</label><input id="scCourse" list="crsNames"></div>
       <div><label>المرحلة</label><select id="scStage" class="optStage"></select></div>
       <div><label>الدراسة</label><select id="scShift" class="optShift"></select></div>
+      <div><label>المادة</label><select id="scCourse"></select></div>
       <div><label>الشعبة</label><select id="scSection" class="optSection" data-all="كل الشعب"></select></div>
       <div><label>النوع</label><select id="scType"><option>نظري</option><option>عملي</option></select></div>
       <div><label>التدريسي</label><select id="scInstr"></select></div>
@@ -1016,6 +1045,7 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
     <h2>الفصل الدراسي الحالي</h2>
     <div class="row"><input id="orgTerm" style="max-width:320px" placeholder="2026-2027 / الفصل الأول"><label style="margin:0;color:#1c2733">بداية الفصل</label><input id="orgTermStart" type="date" style="width:auto"><button class="btn" id="saveTermBtn">حفظ</button></div>
     <p class="note">تُنسب كل محاضرة إلى الفصل الحالي، والتقارير تعرض الفصل الحالي فقط. غيّره عند بداية كل فصل.</p>
+    <button class="btn green" id="openTermModal">⇄ التبديل بين الفصل الأول والثاني</button>
   </div>
   <div class="card">
     <h2>الكليات</h2>
@@ -1157,6 +1187,32 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
     <button class="btn light" id="acClose">إغلاق</button><button class="btn hidden" id="acExport">⬇ تنزيل Excel بالحسابات الجديدة</button><button class="btn" id="acRun"></button></div>
 </div></div>
 
+<!-- باركود دخول النظام -->
+<div class="modal-bg" id="loginQrModal"><div class="modal" style="width:min(520px,100%);text-align:center">
+  <h3>📲 باركود الدخول إلى النظام</h3>
+  <p class="note">أرسله للطلبة أو اطبعه وعلّقه في القسم. يمسحه الطالب بكاميرا هاتفه فيفتح النظام مباشرة.</p>
+  <div class="lq-box"><canvas id="lqCanvas" width="300" height="300"></canvas></div>
+  <div class="note" dir="ltr" id="lqLink" style="word-break:break-all;margin:8px 0"></div>
+  <div class="row" style="justify-content:center">
+    <button class="btn" id="lqPng">⬇ تنزيل صورة</button><button class="btn light" id="lqPrint">🖨 طباعة</button>
+    <button class="btn light" id="lqShare">📤 مشاركة</button><button class="btn light" id="lqCopy">📋 نسخ الرابط</button>
+  </div>
+  <div class="row" style="justify-content:center;margin-top:12px"><button class="btn light sm" id="lqClose">إغلاق</button></div>
+</div></div>
+
+<!-- التبديل بين الفصلين -->
+<div class="modal-bg" id="termModal"><div class="modal" style="width:min(560px,100%)">
+  <h3>⇄ الفصل الدراسي الحالي</h3>
+  <label>العام الدراسي</label><select id="tmYear"></select>
+  <div class="sys-pick" style="margin-top:10px">
+    <label class="sys-opt"><input type="radio" name="tmSem" value="الفصل الأول"><b>١️⃣ الفصل الأول</b><span>الخريف</span></label>
+    <label class="sys-opt"><input type="radio" name="tmSem" value="الفصل الثاني"><b>٢️⃣ الفصل الثاني</b><span>الربيع</span></label>
+  </div>
+  <label style="margin-top:10px">تاريخ بداية الفصل</label><input type="date" id="tmStart">
+  <div class="banner" id="tmPreview" style="margin:12px 0 0;line-height:1.8"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:12px"><button class="btn light" id="tmCancel">إلغاء</button><button class="btn" id="tmSave">حفظ</button></div>
+</div></div>
+
 <!-- نافذة التحقق العشوائي -->
 <div class="modal-bg" id="spotModal"><div class="modal" style="width:min(640px,100%);text-align:center">
   <h3>🎲 تحقق عشوائي — نادِ على هؤلاء الطلبة ليرفعوا أيديهم</h3>
@@ -1174,6 +1230,6 @@ tbody tr{transition:background .12s}tbody tr:hover td{background:#f8faff}
 <div id="qrFull"><div class="qr-pin" id="qrFullTitle" style="font-size:22px"></div><canvas id="qrFullCanvas" width="600" height="600"></canvas><div class="qr-code" id="qrFullCode"></div><div class="qr-pin" style="font-size:20px">PIN: <b id="qrFullPin" dir="ltr"></b> — <span id="qrFullCount"></span> — <span id="qrFullWindow"></span></div><button class="btn light" id="qrFullClose">إغلاق الشاشة الكاملة (Esc)</button></div>
 
 <div id="toasts"></div>
-<script src="app.js?v=6.2.1"></script>
+<script src="app.js?v=6.3.0"></script>
 </body>
 </html>

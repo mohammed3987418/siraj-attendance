@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '6.2.1';
+const APP_VERSION = '6.3.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -230,7 +230,7 @@ function applyRole(){
   showTab(cur ? cur.dataset.tab : first);
   $('#userBox').textContent = App.user.name || App.user.email || ''; $('#roleBox').textContent = ROLES[r];
   $('#sbAv').textContent = (App.user.name || App.user.email || '?').replace(/^(أ\.م\.د\.?|أ\.د\.?|م\.م\.?|م\.د\.?|د\.|م\.|أ\.)\s*/, '').trim().charAt(0) || '?';
-  $('#sbVer').textContent = 'الإصدار ' + APP_VERSION;
+  $('#sbVer').innerHTML = `الإصدار ${APP_VERSION} <span class="dev">تطوير: د. محمد يوسف</span>`;
   $('#policyCard').classList.toggle('hidden', !is('super','dean','head','committee','qa'));
   $$('#policyCard input, #pSave').forEach(x => x.disabled = !is('super','dean','head'));
   $('#promoCard').classList.toggle('hidden', !is('super','dean','head'));
@@ -277,7 +277,7 @@ function renderScope(){
   if (!ds.some(d => d.id === dep)) dep = ds[0] ? ds[0].id : '';
   $('#scopeDept').innerHTML = ds.map(d => `<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('') || '<option value="">—</option>';
   $('#scopeDept').value = dep;
-  $('#termBox').textContent = App.org ? 'الفصل الحالي: \u2066' + App.org.term + '\u2069' : '';
+  $('#termBox').textContent = App.org ? 'الفصل الحالي: \u2066' + App.org.term + '\u2069' + (is('super') ? ' ⇄' : '') : ''; $('#termBox').classList.toggle('clickable', is('super')); $('#termBox').title = is('super') ? 'اضغط للتبديل بين الفصل الأول والثاني' : '';
   setDept(dep);
 }
 $('#scopeCollege').onchange = () => {
@@ -2172,7 +2172,7 @@ function fillInstrSelect(){
 }
 function renderSchedule(){
   if (!$('#scBody') || !App.user) return;
-  if (is('super','dean','head')) fillInstrSelect();
+  if (is('super','dean','head')){ fillInstrSelect(); fillScCourses(); }
   const ed = is('super','dean','head');
   const list = slotList().filter(s => !is('instructor') || s.instr === App.user.uid).sort((a, b) => dayOrder(a.day) - dayOrder(b.day) || a.from.localeCompare(b.from));
   $('#scBody').innerHTML = list.map(s => `<tr><td>${DAYS[s.day]}</td><td dir="ltr" style="text-align:right">${esc(s.from)} – ${esc(s.to)}</td><td>${esc(s.course)}</td>
@@ -2181,12 +2181,13 @@ function renderSchedule(){
     || `<tr><td colspan="8" class="note">${App.dept ? 'لا توجد محاضرات في الجدول' : 'اختر القسم'}</td></tr>`;
 }
 const hoursBetween = (a, b) => { const [h1, m1] = a.split(':').map(Number), [h2, m2] = b.split(':').map(Number); return Math.max(1, Math.round(((h2 * 60 + m2) - (h1 * 60 + m1)) / 60)); };
-$('#scClear').onclick = () => { scEditing = null; $('#scCourse').value = ''; $('#scRoom').value = ''; $('#scNote').textContent = ''; };
+$('#scClear').onclick = () => { scEditing = null; fillScCourses(''); $('#scRoom').value = ''; $('#scNote').textContent = ''; };
 $('#scAdd').onclick = () => {
   const d = App.dept, id = schedId(); if (!d || !id) return;
   const s = {day:+$('#scDay').value, from:$('#scFrom').value, to:$('#scTo').value, course:$('#scCourse').value.trim(), stage:$('#scStage').value, shift:$('#scShift').value,
     section:$('#scSection').value, type:$('#scType').value, instr:$('#scInstr').value, instrName:($('#scInstr').selectedOptions[0] || {}).textContent || '', room:$('#scRoom').value.trim()};
-  if (!s.course || !s.from || !s.to || s.to <= s.from) return toast('أكمل المادة والوقت بشكل صحيح', 'err');
+  if (!s.course) return toast('اختر المادة من القائمة', 'err');
+  if (!s.from || !s.to || s.to <= s.from) return toast('أكمل الوقت بشكل صحيح', 'err');
   s.hours = hoursBetween(s.from, s.to);
   const sid = scEditing || ('s' + Date.now().toString(36));
   bg(DB.set('att_schedule', id, {deptId:d.id, collegeId:d.collegeId, term:App.org.term, updatedAt:nowISO(), slots:{[sid]:s}}, true).p, scEditing ? 'تم التعديل' : 'أُضيفت المحاضرة');
@@ -2196,7 +2197,7 @@ $('#scAdd').onclick = () => {
 $('#scBody').onclick = async e => {
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.sce){ const s = slotList().find(x => x.id === b.dataset.sce); scEditing = s.id;
-    $('#scDay').value = s.day; $('#scFrom').value = s.from; $('#scTo').value = s.to; $('#scCourse').value = s.course; $('#scStage').value = s.stage; $('#scShift').value = s.shift;
+    $('#scDay').value = s.day; $('#scFrom').value = s.from; $('#scTo').value = s.to; $('#scStage').value = s.stage; $('#scShift').value = s.shift; fillScCourses(s.course);
     $('#scSection').value = s.section || ''; $('#scType').value = s.type || 'نظري'; $('#scInstr').value = s.instr; $('#scRoom').value = s.room || ''; $('#scNote').textContent = 'تعديل: ' + s.course; }
   if (b.dataset.scd && await confirmBox('حذف من الجدول', 'ستُحذف هذه المحاضرة من الجدول الأسبوعي.', 'حذف')){
     bg(DB.update('att_schedule', schedId(), {[`slots.${b.dataset.scd}`]:DEL, updatedAt:nowISO()}).p); audit('حذف من الجدول الأسبوعي', b.dataset.scd); }
@@ -2761,7 +2762,7 @@ async function enterStudent(st){
   $('#stInfo').textContent = `${dn} — ${st.stage} / ${st.shift}${st.section ? ' / ' + st.section : ''}`;
   stConn(); $('#stResult').innerHTML = ''; camHelp(''); stOrg = null;
   if (navigator.onLine && App.mode !== 'local'){ setTimeout(() => { $('#stAttLoad').onclick(); $('#stResLoad').onclick(); loadMyExcuses(); }, 800); }
-  $('#stVer') && ($('#stVer').textContent = 'الإصدار ' + APP_VERSION);
+  $('#stVer') && ($('#stVer').textContent = 'الإصدار ' + APP_VERSION + ' — تطوير: د. محمد يوسف');
   const bind = await bindDevice(st);
   if (bind !== true){ stopScan(); $('#scanBtn').classList.add('hidden'); camHelp(bind); return; }
   renderQueue(); flushQueue();
@@ -3311,6 +3312,7 @@ async function renderHome(force){
   if (is('super','dean','head','instructor')) q.push(['📷', 'أخذ الحضور', 'tSession']);
   if (mgr) q.push(['📥', 'استيراد طلبة', 'imp']);
   if (mgr) q.push(['📣', 'إعلان جديد', 'tAnn']);
+  if (mgr) q.push(['📲', 'باركود الدخول', 'qr']);
   if (is('super','dean','head','committee','instructor')) q.push(['🎓', 'جدول الدرجات', 'tGrades']);
   if (is('super','dean','head','qa')) q.push(['📈', 'تقارير الجودة', 'tQA']);
   if (is('super','dean','head')) q.push(['📄', 'الأعذار', 'tExcuses']);
@@ -3359,6 +3361,7 @@ document.addEventListener('click', e => {
   const el = e.target.closest('[data-go]'); if (!el || !$('#appView').contains(el)) return;
   const g = el.dataset.go;
   if (g === 'imp'){ showTab('tStudents'); setTimeout(() => $('#importBtn').click(), 50); return; }
+  if (g === 'qr'){ openLoginQR(); return; }
   showTab(g);
 });
 let homeTimer = null;
@@ -3612,6 +3615,101 @@ $('#aaDel').onclick = async () => {
   }catch(e){ console.error(e); toast('تعذّر الحذف: ' + e.message, 'err'); }
   AA.users = AA.users.filter(u => !(AA.sel.has(u.uid) && done)); AA.sel.clear(); $('#aaLoad').click();
 };
+
+/* ---------- باركود دخول النظام (يُرسل للطلبة) ---------- */
+const DEV_CREDIT = 'تطوير: د. محمد يوسف';
+function loginPosterCanvas(scale = 2){
+  const W = 620 * scale, H = 860 * scale, c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d'), S = v => v * scale, link = appBase();
+  const bgG = g.createLinearGradient(0, 0, W, H); bgG.addColorStop(0, '#1e3a8a'); bgG.addColorStop(.55, '#4f46e5'); bgG.addColorStop(1, '#7c3aed');
+  g.fillStyle = bgG; g.fillRect(0, 0, W, H);
+  g.fillStyle = 'rgba(255,255,255,.08)'; g.beginPath(); g.arc(S(80), S(90), S(170), 0, 7); g.fill(); g.beginPath(); g.arc(S(560), S(780), S(200), 0, 7); g.fill();
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  g.direction = 'rtl'; g.textAlign = 'center'; g.fillStyle = '#fff';
+  g.font = `700 ${S(30)}px 'IBM Plex Sans Arabic', Cairo, Tahoma, sans-serif`; g.fillText('نظام الحضور والدرجات', W / 2, S(78));
+  g.font = `500 ${S(18)}px 'IBM Plex Sans Arabic', Cairo, Tahoma, sans-serif`; g.fillStyle = 'rgba(255,255,255,.85)'; g.fillText('جامعة السراج — امسح الرمز للدخول إلى النظام', W / 2, S(112));
+  g.fillStyle = '#fff'; rr(S(110), S(140), S(400), S(400), S(28)); g.fill();
+  const qc = document.createElement('canvas'); qc.width = qc.height = S(360); drawQR(qc, link); g.drawImage(qc, S(130), S(160));
+  g.fillStyle = 'rgba(255,255,255,.14)'; rr(S(50), S(566), S(520), S(48), S(14)); g.fill();
+  g.fillStyle = '#fff'; g.font = `600 ${S(15)}px Tahoma, sans-serif`; g.direction = 'ltr'; g.fillText(link.length > 60 ? link.slice(0, 58) + '…' : link, W / 2, S(596)); g.direction = 'rtl';
+  const steps = ['① امسح الرمز بكاميرا الهاتف وافتح الرابط', '② ادخل بالبريد وكلمة المرور المسلّمة لك من القسم', '③ سجّل بصمة وجهك مرة واحدة', '④ أضف التطبيق إلى الشاشة الرئيسية'];
+  g.textAlign = 'right'; g.font = `500 ${S(17)}px 'IBM Plex Sans Arabic', Cairo, Tahoma, sans-serif`;
+  steps.forEach((t, i) => { g.fillStyle = '#fff'; g.fillText(t, W - S(70), S(654 + i * 36)); });
+  g.textAlign = 'center'; g.fillStyle = 'rgba(255,255,255,.7)'; g.font = `500 ${S(13)}px 'IBM Plex Sans Arabic', Cairo, Tahoma, sans-serif`; g.fillText(DEV_CREDIT, W / 2, H - S(20));
+  return c;
+}
+function openLoginQR(){
+  const link = appBase();
+  $('#lqLink').textContent = link;
+  drawQR($('#lqCanvas'), link);
+  $('#lqShare').classList.toggle('hidden', !navigator.share);
+  $('#loginQrModal').classList.add('show');
+}
+$('#lqClose').onclick = () => $('#loginQrModal').classList.remove('show');
+$('#lqCopy').onclick = () => { (navigator.clipboard ? navigator.clipboard.writeText(appBase()) : Promise.reject()).then(() => toast('نُسخ الرابط ✓', 'ok'), () => toast(appBase())); };
+$('#lqPng').onclick = () => { const a = document.createElement('a'); a.href = loginPosterCanvas(2).toDataURL('image/png'); a.download = 'باركود_دخول_النظام.png'; a.click(); };
+$('#lqPrint').onclick = () => {
+  const url = loginPosterCanvas(2).toDataURL('image/png'), w = window.open('', '_blank');
+  if (!w) return toast('اسمح بالنوافذ المنبثقة للطباعة', 'err');
+  w.document.write(`<!doctype html><html dir="rtl"><head><title>باركود دخول النظام</title><style>@page{size:A4;margin:12mm}body{margin:0;display:grid;place-items:center;min-height:95vh}img{width:150mm;max-width:100%}</style></head><body><img src="${url}" onload="setTimeout(()=>{print()},200)"></body></html>`);
+  w.document.close();
+};
+$('#lqShare').onclick = async () => {
+  try{ const blob = await new Promise(r => loginPosterCanvas(2).toBlob(r, 'image/png')), file = new File([blob], 'login-qr.png', {type:'image/png'});
+    const data = {title:'نظام الحضور — جامعة السراج', text:'رابط الدخول إلى نظام الحضور والدرجات:\n' + appBase()};
+    if (navigator.canShare && navigator.canShare({files:[file]})) data.files = [file];
+    await navigator.share(data);
+  }catch(e){ if (e.name !== 'AbortError') toast('تعذّرت المشاركة', 'err'); }
+};
+document.addEventListener('click', e => { if (e.target.closest('[data-loginqr]')) openLoginQR(); });
+
+/* ---------- التبديل بين الفصل الأول والثاني ---------- */
+const parseTerm = t => { const m = /^\s*(\d{4})\s*-\s*(\d{4})\s*\/\s*(.+?)\s*$/.exec(t || ''); return m ? {year:`${m[1]}-${m[2]}`, sem:m[3]} : null; };
+const SEMS = ['الفصل الأول', 'الفصل الثاني'];
+function openTermModal(){
+  if (!is('super')) return;
+  const cur = parseTerm(App.org && App.org.term) || {}, y0 = new Date().getFullYear(), years = [];
+  for (let y = y0 - 2; y <= y0 + 1; y++) years.push(`${y}-${y + 1}`);
+  if (cur.year && !years.includes(cur.year)) years.push(cur.year);
+  $('#tmYear').innerHTML = years.sort().map(y => `<option ${y === cur.year ? 'selected' : ''}>${y}</option>`).join('');
+  if (!cur.year) $('#tmYear').value = (new Date().getMonth() >= 7 ? `${y0}-${y0 + 1}` : `${y0 - 1}-${y0}`);
+  $$('input[name=tmSem]').forEach(r => r.checked = r.value === (SEMS.includes(cur.sem) ? cur.sem : SEMS[0]));
+  tmFill(); $('#termModal').classList.add('show');
+}
+const tmTerm = () => `${$('#tmYear').value} / ${(document.querySelector('input[name=tmSem]:checked') || {}).value || SEMS[0]}`;
+function tmFill(){
+  const t = tmTerm(), starts = (App.org && App.org.termStarts) || {};
+  $('#tmStart').value = starts[t] || (t === App.org.term ? App.org.termStart || '' : '');
+  $('#tmPreview').innerHTML = t === App.org.term ? `هذا هو الفصل الحالي: <b>${esc(t)}</b>` : `سيصبح الفصل الحالي: <b>${esc(t)}</b> — المحاضرات والدرجات الجديدة تُنسب إليه، وسجلات <b>${esc(App.org.term || '')}</b> تبقى محفوظة ويمكن الرجوع إليها بإعادة التبديل.`;
+}
+$('#tmYear').onchange = tmFill; $$('input[name=tmSem]').forEach(r => r.onchange = tmFill);
+$('#tmCancel').onclick = () => $('#termModal').classList.remove('show');
+$('#tmSave').onclick = () => {
+  const t = tmTerm(), ts = $('#tmStart').value, o = clone(App.org);
+  o.termStarts = Object.assign({}, o.termStarts || {}); if (o.term && o.termStart) o.termStarts[o.term] = o.termStart; if (ts) o.termStarts[t] = ts;
+  const changed = t !== o.term; o.term = t; o.termStart = ts;
+  saveOrg(o, changed ? 'تم التبديل إلى ' + t : 'تم حفظ تاريخ بداية الفصل'); if (changed) audit('تبديل الفصل الدراسي', t);
+  $('#termModal').classList.remove('show');
+};
+$('#termBox').onclick = () => { if (is('super')) openTermModal(); };
+$('#openTermModal').onclick = openTermModal;
+
+/* ---------- الجدول الأسبوعي: المادة من قائمة ---------- */
+function fillScCourses(keep){
+  const st = $('#scStage').value, sh = $('#scShift').value, cur = keep != null ? keep : $('#scCourse').value;
+  const fromCourses = courseList().filter(c => c.stage === st).map(c => c.name);
+  const fromAsg = App.users.flatMap(u => (u.assignments || []).filter(a => App.dept && a.deptId === App.dept.id && a.stage === st && (!sh || a.shift === sh)).map(a => a.course));
+  const names = [...new Set(fromCourses.concat(fromAsg))].sort((a, b) => a.localeCompare(b, 'ar'));
+  if (cur && !names.includes(cur)) names.unshift(cur);
+  $('#scCourse').innerHTML = `<option value="">${names.length ? '— اختر المادة —' : '— لا توجد مواد لهذه المرحلة: أضفها من «اللجنة الامتحانية ← المواد الدراسية» —'}</option>` + names.map(n => `<option ${n === cur ? 'selected' : ''}>${esc(n)}</option>`).join('');
+}
+$('#scStage').addEventListener('change', () => fillScCourses(''));
+$('#scShift').addEventListener('change', () => fillScCourses());
+$('#scCourse').addEventListener('change', () => { // اختيار التدريسي المكلّف بالمادة تلقائياً
+  const c = $('#scCourse').value, st = $('#scStage').value, sh = $('#scShift').value, sec = $('#scSection').value;
+  const u = App.users.find(u => (u.assignments || []).some(a => App.dept && a.deptId === App.dept.id && a.course === c && a.stage === st && a.shift === sh && (!a.section || !sec || a.section === sec)));
+  if (u && [...$('#scInstr').options].some(o => o.value === u.id)) $('#scInstr').value = u.id;
+});
 
 /* ============ تسجيل الدخول والتشغيل ============ */
 $('#loginForm').onsubmit = async e => {
