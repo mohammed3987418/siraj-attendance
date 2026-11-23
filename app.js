@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '6.2.0';
+const APP_VERSION = '6.2.1';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -136,6 +136,7 @@ const tsMillis = v => v == null ? null : typeof v === 'number' ? v : (v.toMillis
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 const clone = v => JSON.parse(JSON.stringify(v));
 
+const hasNestedArr = (v, inArr) => Array.isArray(v) ? (inArr || v.some(x => hasNestedArr(x, true))) : (v && typeof v === 'object' && !(v instanceof Date) ? Object.values(v).some(x => hasNestedArr(x, false)) : false);
 const LFS = { // محاكاة محلية
   d:{}, subs:[],
   load(){ this.d = LS.get('fa3_db', {}); },
@@ -144,6 +145,7 @@ const LFS = { // محاكاة محلية
   merge(a, b){ Object.entries(b).forEach(([k, v]) => { if (isDel(v)) delete a[k]; else if (isTs(v)) a[k] = Date.now(); else if (isObj(v) && isObj(a[k])) this.merge(a[k], v); else a[k] = clone(v); }); return a; },
   async get(c, id){ const x = this.col(c)[id]; return x ? Object.assign({id}, clone(x)) : null; },
   set(c, id, data, merge){
+    if (hasNestedArr(data)) return {id, p:Promise.reject(new Error('Nested arrays are not supported (Firestore)'))};
     id = id || ('L' + Date.now() + Math.random().toString(36).slice(2, 6));
     const col = this.col(c);
     col[id] = merge && col[id] ? this.merge(col[id], data) : this.merge({}, data);
@@ -170,8 +172,8 @@ const FS = { // Firestore
   conv(v){ if (isDel(v)) return firebase.firestore.FieldValue.delete(); if (isTs(v)) return firebase.firestore.FieldValue.serverTimestamp(); if (isObj(v)){ const o = {}; Object.entries(v).forEach(([k, x]) => o[k] = this.conv(x)); return o; } return v; },
   q(c, f=[]){ let q = db.collection(c); f.forEach(([k, v]) => q = q.where(k, '==', v)); return q; },
   async get(c, id){ const d = await db.collection(c).doc(id).get(); return d.exists ? Object.assign({id:d.id}, d.data()) : null; },
-  set(c, id, data, merge){ const ref = id ? db.collection(c).doc(id) : db.collection(c).doc(); return {id:ref.id, p:ref.set(this.conv(data), {merge:!!merge})}; },
-  update(c, id, patch){ return {p:db.collection(c).doc(id).update(this.conv(patch))}; },
+  set(c, id, data, merge){ const ref = id ? db.collection(c).doc(id) : db.collection(c).doc(); let p; try{ p = ref.set(this.conv(data), {merge:!!merge}); }catch(e){ p = Promise.reject(e); } return {id:ref.id, p}; },
+  update(c, id, patch){ let p; try{ p = db.collection(c).doc(id).update(this.conv(patch)); }catch(e){ p = Promise.reject(e); } return {p}; },
   del(c, id){ return {p:db.collection(c).doc(id).delete()}; },
   async query(c, f){ return (await this.q(c, f).get()).docs.map(d => Object.assign({id:d.id}, d.data())); },
   async queryAfter(c, field, ms){ return (await db.collection(c).where(field, '>', firebase.firestore.Timestamp.fromMillis(ms)).get()).docs.map(d => Object.assign({id:d.id}, d.data())); },
@@ -1571,7 +1573,9 @@ const canEditFinals = () => is('super','head','committee');
 const seesFinals = () => is('super','dean','head','committee');
 
 /* ---------- المواد ---------- */
-const courseList = () => Object.entries((App.courses && App.courses.courses) || {}).map(([id, c]) => Object.assign({id}, c));
+const normComps = comps => (comps || []).map(x => Array.isArray(x) ? x : [x.n, +x.m || 0, x.t || 'manual'].concat(x.g ? [x.g] : []));
+const compsStore = comps => comps.map(c => Object.assign({n:c[0], m:c[1], t:c[2] || 'manual'}, c[3] ? {g:c[3]} : {})); // Firestore لا يقبل مصفوفة داخل مصفوفة
+const courseList = () => Object.entries((App.courses && App.courses.courses) || {}).map(([id, c]) => Object.assign({id}, c, {comps:normComps(c.comps)}));
 const courseDef = (name, stage) => courseList().find(c => c.name.trim() === String(name || '').trim() && c.stage === stage) || null;
 function parseComps(txt){
   return String(txt || '').split(/[,،\n]/).map(x => x.trim()).filter(Boolean).map(x => {
@@ -1652,7 +1656,7 @@ $('#crSave').onclick = () => {
   if (bo && mid) comps.push(['امتحان منتصف الفصل (Mid)', mid, 'manual', 'mid']);
   const id = crEditing || ('k' + Date.now().toString(36));
   bg(DB.set('att_courses', d.id, {collegeId:d.collegeId, deptId:d.id, updatedAt:nowISO(),
-    courses:{[id]:{stage, name, code:$('#crCode').value.trim(), units, system:sys, cum, mid, sae:r2(cum + mid), final:fin, comps}}}, true).p, crEditing ? 'تم تعديل المادة' : 'تمت إضافة المادة');
+    courses:{[id]:{stage, name, code:$('#crCode').value.trim(), units, system:sys, cum, mid, sae:r2(cum + mid), final:fin, comps:compsStore(comps)}}}, true).p, crEditing ? 'تم تعديل المادة' : 'تمت إضافة المادة');
   audit(crEditing ? 'تعديل مادة' : 'إضافة مادة', `${name} — ${stage} — ${bo ? 'بولونيا' : 'تقليدي'}`);
   $('#crClear').onclick();
 };
