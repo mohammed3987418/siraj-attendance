@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '6.3.0';
+const APP_VERSION = '6.4.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -228,7 +228,10 @@ function applyRole(){
   });
   const cur = $$('nav button').find(b => b.classList.contains('active') && !b.classList.contains('hidden'));
   showTab(cur ? cur.dataset.tab : first);
-  $('#userBox').textContent = App.user.name || App.user.email || ''; $('#roleBox').textContent = ROLES[r];
+  $('#userBox').textContent = App.user.name || App.user.email || ''; $('#roleBox').textContent = ROLES[r] + (App.user.realRole ? ` (${ROLES[App.user.realRole]})` : '');
+  const dual = canDual(App.user);
+  $('#switchRoleBtn').classList.toggle('hidden', !dual);
+  if (dual) $('#switchRoleBtn').textContent = App.user.realRole ? `⇄ الدخول بصفة ${ROLES[App.user.realRole]}` : '⇄ الدخول بصفة تدريسي';
   $('#sbAv').textContent = (App.user.name || App.user.email || '?').replace(/^(أ\.م\.د\.?|أ\.د\.?|م\.م\.?|م\.د\.?|د\.|م\.|أ\.)\s*/, '').trim().charAt(0) || '?';
   $('#sbVer').innerHTML = `الإصدار ${APP_VERSION} <span class="dev">تطوير: د. محمد يوسف</span>`;
   $('#policyCard').classList.toggle('hidden', !is('super','dean','head','committee','qa'));
@@ -2545,7 +2548,8 @@ $('#umAddAsg').onclick = () => {
 $('#umGen').onclick = () => { $('#umPass').value = genPass(); };
 function umRoleUI(){
   const r = $('#umRole').value;
-  $('#umAsgBox').classList.toggle('hidden', r !== 'instructor');
+  $('#umAsgBox').classList.toggle('hidden', !['instructor','head','dean'].includes(r));
+  $('#umAsgTitle').textContent = r === 'instructor' ? 'المواد التي يدرّسها' : 'المواد التي يدرّسها أيضاً (اختياري — يستطيع الدخول كتدريسي)';
   $('#umDeptBox').classList.toggle('hidden', !['head','registrar','committee'].includes(r));
   if (r === 'instructor' && !umAsg.length) $('#umAddAsg').onclick();
 }
@@ -2594,6 +2598,10 @@ $('#umSave').onclick = async () => {
     if (!is('super')) collegeId = App.user.collegeId;
     else { const d = (App.org.depts || {})[deptIds[0]]; if (d) collegeId = d.collegeId; }
   } else if (['head','registrar','committee'].includes(r) && !deptIds.length) return toast('اختر قسماً واحداً على الأقل', 'err');
+  if (['head','dean'].includes(r)){ // رئيس قسم/عميد يدرّس مواد أيضاً
+    assignments = umAsg.map(a => ({deptId:a.deptId, course:String(a.course || '').replace('__free', '').trim(), stage:a.stage, shift:a.shift, section:a.section || ''})).filter(a => a.course && a.deptId);
+    if (r === 'head' && assignments.some(a => !deptIds.includes(a.deptId))) return toast('مواد رئيس القسم يجب أن تكون ضمن أقسامه المختارة', 'err');
+  }
   if (!['head','registrar','committee','instructor'].includes(r)) deptIds = deptIds.filter(() => false);
   if (r !== 'super' && !collegeId) return toast('اختر الكلية', 'err');
   $('#umSave').disabled = true;
@@ -3726,7 +3734,32 @@ $('#forgotLink').onclick = async e => {
 $('#logoutBtn').onclick = async () => {
   if (sess) return toast('أنهِ المحاضرة الجارية أولاً', 'err');
   if (App.pending && !(await confirmBox('بيانات غير مرفوعة', `توجد ${App.pending} محاضرة لم تُرفع بعد. إذا خرجت قد تُفقد. هل تريد الخروج؟`, 'خروج'))) return;
+  if (App.user) sessionStorage.removeItem('role_pick_' + App.user.uid);
   await auth.signOut();
+};
+/* ---- رئيس القسم (أو العميد) الذي يدرّس مواد: يختار عند الدخول «رئيس قسم» أو «تدريسي» ---- */
+const canDual = u => !!u && ['head','dean'].includes(u.realRole || u.role) && (u.assignments || []).length > 0;
+function asInstructor(base){ return Object.assign({}, base, {role:'instructor', realRole:base.role, staffDeptIds:base.deptIds, deptIds:[...new Set((base.assignments || []).map(a => a.deptId))]}); }
+function chooseRole(base){
+  if (!canDual(base)) return Promise.resolve(base);
+  const saved = sessionStorage.getItem('role_pick_' + base.uid);
+  if (saved) return Promise.resolve(saved === 'instructor' ? asInstructor(base) : base);
+  return new Promise(res => {
+    $('#rpName').textContent = base.name || base.email || '';
+    $('#rpStaffT').textContent = ROLES[base.role]; $('#rpStaffD').textContent = base.role === 'dean' ? 'إدارة أقسام الكلية والتقارير والقرارات' : 'إدارة القسم: الطلبة، الإنذارات، الأعذار، الجدول، اللجنة الامتحانية';
+    $('#rpInstrD').textContent = 'أخذ الحضور وإدخال السعي لموادك: ' + [...new Set(base.assignments.map(a => a.course))].slice(0, 4).join('، ');
+    $('#rolePickModal').classList.add('show');
+    const go = pick => { $('#rolePickModal').classList.remove('show'); sessionStorage.setItem('role_pick_' + base.uid, pick); res(pick === 'instructor' ? asInstructor(base) : base); };
+    $('#rpStaff').onclick = () => go('staff'); $('#rpInstr').onclick = () => go('instructor');
+  });
+}
+$('#switchRoleBtn').onclick = () => {
+  const u = App.user; if (!canDual(u)) return;
+  const base = u.realRole ? Object.assign({}, u, {role:u.realRole, realRole:undefined, deptIds:u.staffDeptIds || u.deptIds}) : u;
+  delete base.realRole;
+  const next = u.realRole ? base : asInstructor(base);
+  sessionStorage.setItem('role_pick_' + u.uid, u.realRole ? 'staff' : 'instructor');
+  unsubAll(); startSession(next); toast(`تعمل الآن بصفة ${ROLES[next.role]}`, 'ok');
 };
 function startSession(user){
   App.user = user; App.dept = null; App.org = null; App.term = null;
@@ -3765,7 +3798,8 @@ async function boot(){
         await auth.signOut(); return;
       }
       sessionStorage.removeItem('fa_pending');
-      startSession(Object.assign({}, d, {uid:u.uid, email:u.email, role:r, deptIds:d.deptIds || []}));
+      const base = Object.assign({}, d, {uid:u.uid, email:u.email, role:r, deptIds:d.deptIds || []});
+      startSession(await chooseRole(base));
     }catch(e){
       console.error(e);
       showLogin('تعذّر التحقق من الصلاحية: ' + fbErr(e) + (navigator.onLine ? '' : ' — يلزم الاتصال بالإنترنت عند أول دخول'));
