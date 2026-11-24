@@ -10,7 +10,7 @@
      att_packs/{dept~stage~shift} : طلبة مرحلة/دراسة مع بصماتهم (قراءة واحدة لكل محاضرة)
      att_sessions/{auto}   : محاضرة = مستند واحد
    ===================================================================== */
-const APP_VERSION = '6.4.0';
+const APP_VERSION = '6.5.0';
 const SLOT_MS = 5000; // القيمة الافتراضية لتغيّر رمز QR (يختارها التدريسي لكل محاضرة)
 const QR_GRACE_MS = 20000; // يُقبل الرمز حتى ~٢٠ ثانية بعد انتهاء خانته (زمن المسح والإرسال) عند الاتصال
 const QR_ACCEPT_DAYS = 3;  // مهلة رفع حضور QR المحفوظ على هاتف الطالب دون اتصال
@@ -938,6 +938,32 @@ function renderSelBar(){
   $('#selReissue').disabled = $('#selPurge').disabled = $('#selNone').disabled = !selKeys.size;
 }
 const selList = () => [...selKeys].map(findStudent).filter(Boolean);
+// تنزيل حسابات الطلبة وكلمات مرورهم (رئيس القسم فقط) — يشمل الطلبة الظاهرين حسب الفلاتر، أو المحدَّدين إن وُجد تحديد
+$('#credExport').onclick = async () => {
+  if (!isHeadHere()) return toast('هذه العملية لرئيس القسم فقط', 'err');
+  if (!needXLSX()) return;
+  const d = App.dept, list = (selKeys.size ? selList() : filteredStudents()).slice().sort((a, b) => d.stages.indexOf(a.stage) - d.stages.indexOf(b.stage) || a.shift.localeCompare(b.shift, 'ar') || String(a.section).localeCompare(String(b.section)) || a.name.localeCompare(b.name, 'ar'));
+  if (!list.length) return toast('لا يوجد طلبة في القائمة', 'err');
+  $('#credExport').disabled = true;
+  let creds = {};
+  try{ (await DB.query('att_cred', [['deptId', d.id]])).forEach(c => creds[c.id] = c); }
+  catch(e){ $('#credExport').disabled = false; return toast('تعذّرت قراءة كلمات المرور: ' + fbErr(e), 'err'); }
+  let ok = 0, miss = 0, none = 0;
+  const rows = list.map(s => {
+    const c = s.u ? creds[s.u] : null;
+    const st = !s.u ? (none++, 'لا يوجد حساب — أنشئه من «➕ إنشاء حساب»') : c && c.pw ? (ok++, 'جاهز') : (miss++, 'كلمة المرور غير محفوظة (حساب قديم) — استخدم «🔑 كلمة مرور جديدة»');
+    return [s.id, s.name, s.stage, s.shift, s.section || '', s.e || (c && c.email) || '', c && c.pw ? c.pw : '', st];
+  });
+  const link = location.origin + location.pathname.replace(/index\.html$/, '');
+  const ws = XLSX.utils.aoa_to_sheet([['رابط النظام', link], ['القسم', d.name, '', 'تاريخ التنزيل', today()], ['تنبيه', 'ملف سرّي: يحتوي كلمات مرور الطلبة — لا تنشره، وسلّم كل طالب سطره فقط.'], [],
+    ['الرقم الجامعي','الاسم','المرحلة','الدراسة','الشعبة','البريد الإلكتروني (اسم الدخول)','كلمة المرور','الحالة'], ...rows]);
+  ws['!cols'] = [{wch:14},{wch:30},{wch:10},{wch:9},{wch:7},{wch:34},{wch:14},{wch:46}];
+  const wb = XLSX.utils.book_new(); wb.Workbook = {Views:[{RTL:true}]}; XLSX.utils.book_append_sheet(wb, ws, 'حسابات الطلبة');
+  XLSX.writeFile(wb, `حسابات_طلبة_${d.name}_${today()}.xlsx`);
+  audit('تنزيل حسابات الطلبة وكلمات المرور', `${list.length} طالب — ${d.name}`);
+  $('#credExport').disabled = false;
+  toast(`نُزّل الملف: ${ok} حساب بكلمة مروره` + (miss ? ` — ${miss} بلا كلمة مرور محفوظة` : '') + (none ? ` — ${none} بلا حساب` : ''), miss || none ? 'err' : 'ok');
+};
 $('#selAll').onclick = () => { filteredStudents().slice(0, 800).forEach(s => selKeys.add(s.packId + '|' + s.id)); renderStudents(); };
 $('#selNone').onclick = () => { selKeys.clear(); renderStudents(); };
 $('#selReissue').onclick = () => openAcct('reissue', selList());
